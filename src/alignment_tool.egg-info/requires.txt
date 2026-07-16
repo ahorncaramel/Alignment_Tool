@@ -1,0 +1,7 @@
+PySide6
+tifffile
+pillow
+numpy
+
+[dev]
+pytest

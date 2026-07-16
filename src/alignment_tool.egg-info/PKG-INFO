@@ -1,0 +1,11 @@
+Metadata-Version: 2.4
+Name: alignment-tool
+Version: 0.1.0
+Summary: Calcium imaging -> CYP11B2 IHC alignment tool (v1)
+Requires-Python: >=3.11
+Requires-Dist: PySide6
+Requires-Dist: tifffile
+Requires-Dist: pillow
+Requires-Dist: numpy
+Provides-Extra: dev
+Requires-Dist: pytest; extra == "dev"
