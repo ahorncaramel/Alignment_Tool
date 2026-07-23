@@ -27,26 +27,26 @@ def test_all_four_preflight_states_are_distinguished(tmp_path):
     experiment.mkdir()
 
     present = _make_rec_folder(experiment, "Rec_006_03_01")
-    _write_valid_png(present / "Flatrec_Rec_006_03_01.png")
+    _write_valid_png(present / "Flatrec_006_03_01.png")
 
     missing = _make_rec_folder(experiment, "Rec_006_03_02")
     (missing / "unrelated_notes.txt").write_text("no flat image here")
 
     misspelled = _make_rec_folder(experiment, "Rec_006_03_03")
-    _write_valid_png(misspelled / "Flatrec_Rec_006_03_3.png")  # missing leading zero
+    _write_valid_png(misspelled / "Flatrec_006_03_3.png")  # missing leading zero
 
     unreadable = _make_rec_folder(experiment, "Rec_006_03_04")
-    (unreadable / "Flatrec_Rec_006_03_04.png").write_bytes(b"not actually a png")
+    (unreadable / "Flatrec_006_03_04.png").write_bytes(b"not actually a png")
 
     results = {r.full_id: r for r in scan_experiment(experiment)}
 
     assert results["Rec_006_03_01"].status == STATUS_PRESENT
-    assert results["Rec_006_03_01"].flat_image_path.name == "Flatrec_Rec_006_03_01.png"
+    assert results["Rec_006_03_01"].flat_image_path.name == "Flatrec_006_03_01.png"
 
     assert results["Rec_006_03_02"].status == STATUS_MISSING
 
     assert results["Rec_006_03_03"].status == STATUS_SUSPECTED_MISSPELLING
-    assert results["Rec_006_03_03"].suggested_filename == "Flatrec_Rec_006_03_3.png"
+    assert results["Rec_006_03_03"].suggested_filename == "Flatrec_006_03_3.png"
 
     assert results["Rec_006_03_04"].status == STATUS_UNREADABLE
 
@@ -57,7 +57,7 @@ def test_no_recording_is_silently_dropped(tmp_path):
     for i in range(1, 4):
         folder = _make_rec_folder(experiment, f"Rec_006_03_0{i}")
         if i != 2:
-            _write_valid_png(folder / f"Flatrec_Rec_006_03_0{i}.png")
+            _write_valid_png(folder / f"Flatrec_006_03_0{i}.png")
 
     results = scan_experiment(experiment)
     assert {r.full_id for r in results} == {"Rec_006_03_01", "Rec_006_03_02", "Rec_006_03_03"}
@@ -69,7 +69,7 @@ def test_results_are_sorted_by_recording_number(tmp_path):
     experiment.mkdir()
     for i in [3, 1, 2]:
         folder = _make_rec_folder(experiment, f"Rec_006_03_0{i}")
-        _write_valid_png(folder / f"Flatrec_Rec_006_03_0{i}.png")
+        _write_valid_png(folder / f"Flatrec_006_03_0{i}.png")
 
     results = scan_experiment(experiment)
     assert [r.short_number for r in results] == [1, 2, 3]
@@ -81,7 +81,7 @@ def test_non_recording_folders_are_ignored(tmp_path):
     (experiment / "notes").mkdir()
     (experiment / "README.txt").write_text("hi")
     rec = _make_rec_folder(experiment, "Rec_006_03_01")
-    _write_valid_png(rec / "Flatrec_Rec_006_03_01.png")
+    _write_valid_png(rec / "Flatrec_006_03_01.png")
 
     results = scan_experiment(experiment)
     assert len(results) == 1
@@ -92,7 +92,7 @@ def test_build_initial_recordings_includes_every_discovered_recording_unplaced(t
     experiment = tmp_path / "Ex_006_03"
     experiment.mkdir()
     present = _make_rec_folder(experiment, "Rec_006_03_01")
-    _write_valid_png(present / "Flatrec_Rec_006_03_01.png")
+    _write_valid_png(present / "Flatrec_006_03_01.png")
     missing = _make_rec_folder(experiment, "Rec_006_03_02")
     (missing / "notes.txt").write_text("no image")
 
@@ -113,7 +113,7 @@ def test_to_preflight_entries_mirrors_discovery_status(tmp_path):
     experiment = tmp_path / "Ex_006_03"
     experiment.mkdir()
     misspelled = _make_rec_folder(experiment, "Rec_006_03_01")
-    _write_valid_png(misspelled / "Flatrec_Rec_006_03_1.png")
+    _write_valid_png(misspelled / "Flatrec_006_03_1.png")
 
     discovered = scan_experiment(experiment)
     entries = to_preflight_entries(discovered)
@@ -121,7 +121,7 @@ def test_to_preflight_entries_mirrors_discovery_status(tmp_path):
     assert len(entries) == 1
     assert entries[0].full_id == "Rec_006_03_01"
     assert entries[0].status == STATUS_SUSPECTED_MISSPELLING
-    assert entries[0].suggested_filename == "Flatrec_Rec_006_03_1.png"
+    assert entries[0].suggested_filename == "Flatrec_006_03_1.png"
 
 
 def test_find_experiments_scans_op_and_ex_folders(tmp_path):
@@ -138,3 +138,43 @@ def test_find_experiments_scans_op_and_ex_folders(tmp_path):
 
 def test_find_experiments_returns_empty_for_missing_root(tmp_path):
     assert find_experiments(tmp_path / "does_not_exist") == []
+
+
+def test_find_experiments_accepts_exp_prefix_case_insensitively(tmp_path):
+    processing_root = tmp_path / "Processing"
+    (processing_root / "op_008" / "Exp_008_01").mkdir(parents=True)
+
+    experiments = find_experiments(processing_root)
+    assert [e[0] for e in experiments] == ["Exp_008_01"]
+
+
+def test_ome_tif_double_extension_is_an_exact_match_not_a_near_miss(tmp_path):
+    """OME-TIFF exports (OMERO, Micro-Manager, ...) commonly use a compound
+    ".ome.tif" extension; pathlib's plain .stem only strips the last part of
+    that, so this must not be misclassified as a suspected misspelling.
+    """
+    experiment = tmp_path / "Exp_008_01"
+    experiment.mkdir()
+    rec = _make_rec_folder(experiment, "Rec_008_01_01")
+    _write_valid_png(rec / "Flatrec_008_01_01.ome.tif")
+
+    results = {r.full_id: r for r in scan_experiment(experiment)}
+    assert results["Rec_008_01_01"].status == STATUS_PRESENT
+    assert results["Rec_008_01_01"].flat_image_path.name == "Flatrec_008_01_01.ome.tif"
+
+
+def test_raw_recording_file_in_the_same_folder_is_not_picked_up(tmp_path):
+    """A Rec_* folder may also contain the raw (unflattened) recording, named
+    like the folder itself rather than "Flatrec_*" -- it must never be treated
+    as the flat image, exactly or by fuzzy match, when the real flat image
+    is present.
+    """
+    experiment = tmp_path / "Exp_008_01"
+    experiment.mkdir()
+    rec = _make_rec_folder(experiment, "Rec_008_01_01")
+    _write_valid_png(rec / "Rec_008_01_01.ome.tif")  # raw recording, must be ignored
+    _write_valid_png(rec / "Flatrec_008_01_01.ome.tif")
+
+    results = {r.full_id: r for r in scan_experiment(experiment)}
+    assert results["Rec_008_01_01"].status == STATUS_PRESENT
+    assert results["Rec_008_01_01"].flat_image_path.name == "Flatrec_008_01_01.ome.tif"

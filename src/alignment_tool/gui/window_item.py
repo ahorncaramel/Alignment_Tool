@@ -81,8 +81,18 @@ class RecordingWindowItem(QGraphicsPixmapItem):
 
     def set_placement(self, theta_deg: float, x: float, y: float, scale: float) -> None:
         self.setRotation(-theta_deg)  # see module note on rotation direction
-        self.setScale(scale)
+        self.set_scale(scale)
         self.setPos(QPointF(x, y))
+
+    def set_scale(self, scale: float) -> None:
+        """Use this instead of the inherited setScale() directly. The label
+        has ItemIgnoresTransformations set so it ignores this item's rotation
+        and the view's zoom, but its OWN scale still applies on top of that
+        (verified empirically) -- so it must be kept in sync here, or a small
+        window ends up with a label bigger than the image itself.
+        """
+        self.setScale(scale)
+        self._label.setScale(scale)
 
     def centre_scene_pos(self) -> QPointF:
         return self.scenePos()

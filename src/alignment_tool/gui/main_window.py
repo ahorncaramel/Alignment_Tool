@@ -7,6 +7,7 @@ core/ and is independently tested there.
 
 from __future__ import annotations
 
+import math
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -17,6 +18,8 @@ from PySide6.QtWidgets import (
     QDockWidget,
     QInputDialog,
     QLabel,
+    QListWidget,
+    QListWidgetItem,
     QMainWindow,
     QMessageBox,
     QPushButton,
@@ -48,6 +51,7 @@ from alignment_tool.gui.experiment_picker import ExperimentPickerDialog
 from alignment_tool.gui.ihc_item import IhcLayerItem
 from alignment_tool.gui.ihc_select_dialog import IhcSelectDialog
 from alignment_tool.gui.preflight_dialog import PreflightDialog
+from alignment_tool.gui.scale_bar_item import ScaleBarItem
 from alignment_tool.gui.scale_panel import ScalePanel
 from alignment_tool.gui.scene import AlignmentScene, AlignmentView
 from alignment_tool.gui.window_item import RecordingWindowItem
@@ -76,7 +80,9 @@ class MainWindow(QMainWindow):
         self._scene = AlignmentScene(self)
         self._scene.selectionChanged.connect(self._on_selection_changed)
         self._view = AlignmentView(self._scene, self)
+        self._view.scenePointClicked.connect(self._on_scale_bar_point_clicked)
         self.setCentralWidget(self._view)
+        self._scale_bar_points: list = []
 
         self._autosave_timer = QTimer(self)
         self._autosave_timer.setSingleShot(True)
@@ -116,9 +122,24 @@ class MainWindow(QMainWindow):
         self._redo_action.triggered.connect(self._redo)
         edit_menu.addAction(self._redo_action)
 
+        view_menu = self.menuBar().addMenu("&View")
+        fit_action = QAction("&Fit to Window", self)
+        fit_action.setShortcut("Ctrl+0")
+        fit_action.triggered.connect(self._fit_view_to_content)
+        view_menu.addAction(fit_action)
+
+        scale_bar_action = QAction("Add &Scale Bar...", self)
+        scale_bar_action.triggered.connect(self._start_add_scale_bar)
+        view_menu.addAction(scale_bar_action)
+
     def _build_side_panel(self) -> None:
         panel = QWidget()
         layout = QVBoxLayout(panel)
+
+        layout.addWidget(QLabel("Recordings (double-click to jump to one):"))
+        self._recordings_list = QListWidget()
+        self._recordings_list.itemDoubleClicked.connect(self._on_recording_list_activated)
+        layout.addWidget(self._recordings_list)
 
         self._scale_panel = ScalePanel()
         self._scale_panel.scaleEdited.connect(self._on_scale_edited)
@@ -189,7 +210,7 @@ class MainWindow(QMainWindow):
             state = self._build_fresh_session(discovered)
 
         self._history = SessionHistory(state)
-        self._rebuild_scene_from_state(state)
+        self._rebuild_scene_from_state(state, fit_view=True)
         self.statusBar().showMessage(f"Opened {self._experiment_folder.name}")
 
     def _build_fresh_session(self, discovered) -> SessionState:
@@ -213,7 +234,24 @@ class MainWindow(QMainWindow):
         ihc_dims = read_image_dimensions(ihc_path)
         x_cursor = (ihc_dims[0] if ihc_dims else 0) + 80
         y_cursor = 0
-        scale = prefill_scale if prefill_scale is not None else 1.0
+        if prefill_scale is not None:
+            scale = prefill_scale
+        else:
+            # No metadata to calibrate against: a flat 1.0 (native pixel size)
+            # is an arbitrary guess that can make windows wildly too big or too
+            # small next to the IHC image. Instead, size them so the largest
+            # window starts at roughly INITIAL_SIZE_FRACTION of the IHC image's
+            # shorter side -- just a starting point, always overridable via the
+            # scale field (spec S5.2: manual entry always wins).
+            INITIAL_SIZE_FRACTION = 0.12
+            max_native_dim = max(
+                (max(r.width_px, r.height_px) for r in recordings if r.width_px and r.height_px),
+                default=0,
+            )
+            if max_native_dim and ihc_dims:
+                scale = (min(ihc_dims) * INITIAL_SIZE_FRACTION) / max_native_dim
+            else:
+                scale = 1.0
         for rec in recordings:
             if rec.width_px is None or rec.height_px is None:
                 continue
@@ -247,7 +285,7 @@ class MainWindow(QMainWindow):
 
     # ---- Scene <-> SessionState -------------------------------------------
 
-    def _rebuild_scene_from_state(self, state: SessionState) -> None:
+    def _rebuild_scene_from_state(self, state: SessionState, *, fit_view: bool = False) -> None:
         self._scene.clear()
         self._window_items.clear()
         self._selected_item = None
@@ -272,6 +310,7 @@ class MainWindow(QMainWindow):
             self._scene.addItem(item)
             self._window_items[rec.full_id] = item
 
+        self._populate_recordings_list(state)
         self._scale_panel.set_scale(state.shared_scale, source=state.scale_source)
         self._ihc_transparency_spin.blockSignals(True)
         self._ihc_transparency_spin.setValue(state.ihc_transparency_step)
@@ -281,6 +320,94 @@ class MainWindow(QMainWindow):
         # explicitly resync the side panel to "nothing selected" rather than
         # leaving it showing a now-dangling item's stale values.
         self._on_selection_changed()
+
+        if fit_view:
+            self._fit_view_to_content()
+
+    def _fit_view_to_content(self) -> None:
+        rect = self._scene.itemsBoundingRect()
+        if not rect.isEmpty():
+            self._view.fitInView(rect, Qt.AspectRatioMode.KeepAspectRatio)
+
+    def _populate_recordings_list(self, state: SessionState) -> None:
+        self._recordings_list.clear()
+        for rec in sorted(state.recordings, key=lambda r: r.short_number):
+            if rec.dropped:
+                label = f"{rec.short_number}: {rec.full_id} (dropped)"
+            elif rec.full_id not in self._window_items:
+                label = f"{rec.short_number}: {rec.full_id} (not placeable)"
+            else:
+                label = f"{rec.short_number}: {rec.full_id}"
+            list_item = QListWidgetItem(label)
+            list_item.setData(Qt.ItemDataRole.UserRole, rec.full_id)
+            self._recordings_list.addItem(list_item)
+
+    def _on_recording_list_activated(self, list_item: QListWidgetItem) -> None:
+        full_id = list_item.data(Qt.ItemDataRole.UserRole)
+        self._focus_on_recording(full_id)
+
+    def _focus_on_recording(self, full_id: str) -> None:
+        """Centre and zoom the view on one recording window -- a tiny window
+        can otherwise be imperceptible next to a much larger IHC image once
+        the view is fit to the whole scene (e.g. a large whole-slide scan).
+        """
+        item = self._window_items.get(full_id)
+        if item is None:
+            return
+        self._scene.clearSelection()
+        item.setSelected(True)
+        rect = item.sceneBoundingRect()
+        padding = max(rect.width(), rect.height()) * 0.75
+        self._view.fitInView(
+            rect.adjusted(-padding, -padding, padding, padding),
+            Qt.AspectRatioMode.KeepAspectRatio,
+        )
+
+    # ---- Scale bar (visual aid, not part of the export) ----------------------
+
+    def _start_add_scale_bar(self) -> None:
+        if self._history is None:
+            return
+        self._scale_bar_points = []
+        self._view.capture_clicks = True
+        self.statusBar().showMessage("Scale bar: click the FIRST end of the existing reference bar on the IHC image.")
+
+    def _on_scale_bar_point_clicked(self, point) -> None:
+        if not self._view.capture_clicks:
+            return
+        self._scale_bar_points.append(point)
+        if len(self._scale_bar_points) == 1:
+            self.statusBar().showMessage("Scale bar: click the SECOND end of the existing reference bar.")
+        else:
+            self._view.capture_clicks = False
+            self.statusBar().clearMessage()
+            self._finish_add_scale_bar()
+
+    def _finish_add_scale_bar(self) -> None:
+        p1, p2 = self._scale_bar_points
+        reference_px = math.hypot(p2.x() - p1.x(), p2.y() - p1.y())
+        if reference_px <= 0:
+            QMessageBox.warning(self, "Scale bar", "Those two points were the same -- try again.")
+            return
+
+        reference_um, ok = QInputDialog.getDouble(
+            self, "Scale bar", "The bar you just measured represents (µm):", 5000.0, 0.0001, 1e9, 2
+        )
+        if not ok:
+            return
+        new_um, ok = QInputDialog.getDouble(
+            self, "Scale bar", "The new scale bar should represent (µm):", 1000.0, 0.0001, 1e9, 2
+        )
+        if not ok:
+            return
+
+        new_px_length = reference_px * (new_um / reference_um)
+        bar_item = ScaleBarItem(new_px_length, f"{new_um:g} µm")
+        bar_item.setPos(p2.x() + reference_px * 0.15, p2.y())
+        self._scene.addItem(bar_item)
+        self.statusBar().showMessage(
+            f"Added a {new_um:g} µm scale bar ({new_px_length:.1f} px long). Drag it wherever you need it.", 8000
+        )
 
     def _build_current_session_state(self) -> SessionState:
         base = self._history.current
@@ -353,12 +480,12 @@ class MainWindow(QMainWindow):
         new_scale = self._scale_panel.value() * factor
         self._scale_panel.set_scale(new_scale, source="manual")
         for item in self._window_items.values():
-            item.setScale(new_scale)
+            item.set_scale(new_scale)
         self._commit()
 
     def _on_scale_edited(self, value: float) -> None:
         for item in self._window_items.values():
-            item.setScale(value)
+            item.set_scale(value)
         self._commit()
 
     def _on_ihc_transparency_changed(self, step: int) -> None:

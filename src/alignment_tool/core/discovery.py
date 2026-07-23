@@ -16,7 +16,7 @@ from PIL import Image
 
 from alignment_tool.core.session import PreflightEntry, RecordingState
 
-_REC_FOLDER_RE = re.compile(r"^Rec_(\d+)_(\d+)_(\d+)$")
+_REC_FOLDER_RE = re.compile(r"^Rec_(\d+)_(\d+)_(\d+)$", re.IGNORECASE)
 
 STATUS_PRESENT = "present"
 STATUS_MISSING = "missing"
@@ -25,6 +25,23 @@ STATUS_UNREADABLE = "unreadable"
 
 _FUZZY_CUTOFF = 0.6  # difflib similarity ratio; tuned loose since "did you mean" is a
 # suggestion the user confirms/rejects, not an automatic decision.
+
+# Extensions stripped (repeatedly) to find a file's "true" stem. Needed for
+# compound extensions like ".ome.tif" (common for OME-TIFF exports, e.g. from
+# OMERO or Micro-Manager) -- pathlib's .stem only strips the last one, which
+# would otherwise make "Flatrec_008_01_01.ome.tif" look like a near-miss of
+# "Flatrec_008_01_01" instead of an exact match.
+_KNOWN_EXTENSIONS = {".tif", ".tiff", ".png", ".jpg", ".jpeg", ".bmp", ".ome"}
+
+
+def _full_stem(path: Path) -> str:
+    name = path.name
+    while True:
+        candidate = Path(name)
+        if candidate.suffix.lower() in _KNOWN_EXTENSIONS and candidate.stem:
+            name = candidate.stem
+        else:
+            return name
 
 
 @dataclass
@@ -38,7 +55,11 @@ class DiscoveredRecording:
 
 
 def _expected_stem(full_id: str) -> str:
-    return f"Flatrec_{full_id}"
+    # full_id is the Rec_* folder name, e.g. "Rec_008_01_01". The flat image
+    # filename does not repeat "Rec_" (it already lives inside that folder),
+    # so the expected name is "Flatrec_008_01_01".
+    numeric_part = full_id[4:] if full_id.lower().startswith("rec_") else full_id
+    return f"Flatrec_{numeric_part}"
 
 
 def read_image_dimensions(path: Path) -> tuple[int, int] | None:
@@ -81,21 +102,25 @@ def can_read_image(path: Path) -> bool:
     return False
 
 
+_EXPERIMENT_PREFIXES = ("ex_", "exp_")
+
+
 def find_experiments(processing_root: Path) -> list[tuple[str, Path]]:
-    """Return (experiment_id, experiment_folder) for every Ex_* folder found
-    directly under an OP_* folder beneath processing_root (spec S4.1), sorted
-    by name. Naming is matched by prefix only ("OP_", "Ex_"), not a strict
-    numbering pattern, since the exact op/exp numbering scheme may vary.
+    """Return (experiment_id, experiment_folder) for every experiment folder
+    found directly under an OP_* folder beneath processing_root (spec S4.1),
+    sorted by name. Matched by prefix only, case-insensitively -- "OP_" and
+    either "Ex_" or "Exp_" -- not a strict numbering pattern, since the exact
+    op/exp numbering scheme and naming shorthand vary by lab.
     """
     results = []
     root = Path(processing_root)
     if not root.is_dir():
         return results
     for op_folder in sorted(root.iterdir()):
-        if not op_folder.is_dir() or not op_folder.name.startswith("OP_"):
+        if not op_folder.is_dir() or not op_folder.name.lower().startswith("op_"):
             continue
         for ex_folder in sorted(op_folder.iterdir()):
-            if ex_folder.is_dir() and ex_folder.name.startswith("Ex_"):
+            if ex_folder.is_dir() and ex_folder.name.lower().startswith(_EXPERIMENT_PREFIXES):
                 results.append((ex_folder.name, ex_folder))
     return results
 
@@ -123,7 +148,7 @@ def scan_experiment(experiment_folder: Path) -> list[DiscoveredRecording]:
         expected_stem = _expected_stem(full_id)
         files_in_folder = [f for f in folder.iterdir() if f.is_file()]
 
-        exact_matches = [f for f in files_in_folder if f.stem.lower() == expected_stem.lower()]
+        exact_matches = [f for f in files_in_folder if _full_stem(f).lower() == expected_stem.lower()]
 
         if exact_matches:
             flat_path = sorted(exact_matches)[0]
@@ -142,10 +167,10 @@ def scan_experiment(experiment_folder: Path) -> list[DiscoveredRecording]:
             )
             continue
 
-        candidate_stems = [f.stem.lower() for f in files_in_folder]
+        candidate_stems = [_full_stem(f).lower() for f in files_in_folder]
         close = difflib.get_close_matches(expected_stem.lower(), candidate_stems, n=1, cutoff=_FUZZY_CUTOFF)
         if close:
-            suggested = next(f.name for f in files_in_folder if f.stem.lower() == close[0])
+            suggested = next(f.name for f in files_in_folder if _full_stem(f).lower() == close[0])
             discovered.append(
                 DiscoveredRecording(
                     full_id=full_id,

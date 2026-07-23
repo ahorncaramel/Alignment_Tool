@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QGraphicsPixmapItem
 
 from alignment_tool.gui.image_loading import array_to_qpixmap, load_image_array
@@ -20,6 +21,7 @@ class IhcLayerItem(QGraphicsPixmapItem):
         self.height_px, self.width_px = self._array.shape[:2]
         pixmap = array_to_qpixmap(self._array, None, None)
         self.setPixmap(pixmap)
+        self.setTransformationMode(Qt.TransformationMode.SmoothTransformation)
         # Top-left origin (no offset applied): local (0, 0) IS the IHC frame origin.
         self.setZValue(0)
 
