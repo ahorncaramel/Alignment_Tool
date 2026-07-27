@@ -177,7 +177,7 @@ class MainWindow(QMainWindow):
 
         self._drop_button = QPushButton("Drop selected recording")
         self._drop_button.setEnabled(False)
-        self._drop_button.clicked.connect(self._drop_selected_recording)
+        self._drop_button.clicked.connect(self._toggle_drop_selected_recording)
         layout.addWidget(self._drop_button)
 
         layout.addWidget(QLabel("Selected ruler length (px):"))
@@ -312,7 +312,7 @@ class MainWindow(QMainWindow):
         self._scene.addItem(self._ihc_item)
 
         for rec in state.recordings:
-            if rec.dropped or rec.placement is None or not rec.flat_image_path:
+            if rec.placement is None or not rec.flat_image_path:
                 continue
             item = RecordingWindowItem(
                 rec.full_id,
@@ -324,6 +324,7 @@ class MainWindow(QMainWindow):
             item.set_placement(rec.placement.theta_deg, rec.placement.x, rec.placement.y, state.shared_scale)
             item.set_transparency_step(rec.transparency_step)
             item.set_contrast(rec.contrast.display_min, rec.contrast.display_max)
+            item.set_dropped(rec.dropped)
             self._scene.addItem(item)
             self._window_items[rec.full_id] = item
 
@@ -551,7 +552,11 @@ class MainWindow(QMainWindow):
         self._drop_button.setEnabled(has_selection)
         if has_selection:
             item = self._selected_item
-            self._selection_label.setText(f"Selected: {item.full_id}")
+            dropped_suffix = " (dropped)" if item.is_dropped() else ""
+            self._selection_label.setText(f"Selected: {item.full_id}{dropped_suffix}")
+            self._drop_button.setText(
+                "Restore selected recording" if item.is_dropped() else "Drop selected recording"
+            )
             self._window_transparency_spin.blockSignals(True)
             self._window_transparency_spin.setValue(
                 round((1.0 - item.opacity()) / 0.1)
@@ -579,27 +584,34 @@ class MainWindow(QMainWindow):
             self._ruler_length_spin.setValue(self._selected_ruler.length_px())
             self._ruler_length_spin.blockSignals(False)
 
-    def _drop_selected_recording(self) -> None:
-        """Explicit user decision to exclude a recording (spec: independent of
-        the pre-flight image status -- an otherwise-placeable recording can
-        still be deliberately left out). Recorded as status "dropped" in the
-        export, distinct from "missing"/"unreadable" (core/export.py).
+    def _toggle_drop_selected_recording(self) -> None:
+        """Explicit user decision to exclude a recording from the export (spec:
+        independent of the pre-flight image status -- an otherwise-placeable
+        recording can still be deliberately left out). Recorded as status
+        "dropped" in the export, distinct from "missing"/"unreadable"
+        (core/export.py).
+
+        The recording stays visible and selectable either way -- dropping it
+        only marks it (red tint) and excludes it from the export, it does not
+        remove it from view -- and this button toggles the flag directly, so
+        reversing a drop doesn't require walking back through Undo past
+        whatever other edits happened since.
         """
         if self._history is None or self._selected_item is None:
             return
         full_id = self._selected_item.full_id
-        self._scene.removeItem(self._selected_item)
-        del self._window_items[full_id]
-        self._selected_item = None
+        new_dropped = not self._selected_item.is_dropped()
+        self._selected_item.set_dropped(new_dropped)
 
         base = self._history.current
         recordings = [
-            replace(rec, dropped=True) if rec.full_id == full_id else rec for rec in base.recordings
+            replace(rec, dropped=new_dropped) if rec.full_id == full_id else rec for rec in base.recordings
         ]
         new_state = replace(base, recordings=recordings, last_modified=_now_iso())
         self._history.apply(new_state)
         self._update_undo_redo_actions()
         self._autosave_timer.start(_AUTOSAVE_DEBOUNCE_MS)
+        self._populate_recordings_list(new_state)
         self._on_selection_changed()
 
     # ---- Undo / redo --------------------------------------------------------

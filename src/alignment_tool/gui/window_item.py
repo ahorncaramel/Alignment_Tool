@@ -10,7 +10,8 @@ from pathlib import Path
 from typing import Callable
 
 from PySide6.QtCore import QPointF, Qt
-from PySide6.QtWidgets import QGraphicsItem, QGraphicsPixmapItem
+from PySide6.QtGui import QBrush, QColor
+from PySide6.QtWidgets import QGraphicsItem, QGraphicsPixmapItem, QGraphicsRectItem
 
 from alignment_tool.gui.image_loading import array_to_qpixmap, load_image_array
 from alignment_tool.gui.label_item import make_label
@@ -57,6 +58,18 @@ class RecordingWindowItem(QGraphicsPixmapItem):
 
         self._label = make_label(self, str(short_number))
 
+        # Dropped marker: a translucent red tint over the whole window, on top
+        # of the image but below the number label. The window stays fully
+        # visible/selectable/navigable while dropped (spec: dropped only
+        # excludes it from the export, it's not deleted) -- this is purely a
+        # visual "this one is excluded" cue, toggled by set_dropped().
+        self._dropped = False
+        self._dropped_overlay = QGraphicsRectItem(self.boundingRect(), self)
+        self._dropped_overlay.setBrush(QBrush(QColor(255, 0, 0, 90)))
+        self._dropped_overlay.setPen(Qt.PenStyle.NoPen)
+        self._dropped_overlay.setZValue(2)
+        self._dropped_overlay.setVisible(False)
+
     def _refresh_pixmap(self) -> None:
         pixmap = array_to_qpixmap(self._array, self._display_min, self._display_max)
         self.setPixmap(pixmap)
@@ -71,6 +84,13 @@ class RecordingWindowItem(QGraphicsPixmapItem):
 
     def contrast(self) -> tuple[float | None, float | None]:
         return self._display_min, self._display_max
+
+    def set_dropped(self, dropped: bool) -> None:
+        self._dropped = dropped
+        self._dropped_overlay.setVisible(dropped)
+
+    def is_dropped(self) -> bool:
+        return self._dropped
 
     def set_transparency_step(self, step: int) -> None:
         step = max(0, min(9, step))
