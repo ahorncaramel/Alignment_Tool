@@ -153,6 +153,26 @@ def test_csv_row_values_match_the_placement(tmp_path):
     assert row["window_height_px"] == "512"
 
 
+def test_csv_row_carries_the_flat_image_path_so_a_row_is_self_contained(tmp_path):
+    session = make_session()
+    path = write_transform_csv(session, tmp_path / "transform.csv")
+    rows = {r["full_id"]: r for r in _read_data_rows(path)}
+    assert rows["Rec_006_03_01"]["flat_image_path"] == (
+        "C:/Processing/OP_006/Ex_006_03/Rec_006_03_01/Flatrec_Rec_006_03_01.tif"
+    )
+    # A recording discovery couldn't find an image for still gets a row, blank path.
+    assert rows["Rec_006_03_03"]["flat_image_path"] == ""
+
+
+def test_csv_references_the_aligned_image_when_given_one(tmp_path):
+    session = make_session()
+    path = write_transform_csv(
+        session, tmp_path / "transform.csv", aligned_image_path="D:/Output/OP_006/Ex_006_03/aligned_composite.png"
+    )
+    text = path.read_text(encoding="utf-8")
+    assert "aligned_composite.png" in text
+
+
 def test_action_log_records_experiment_ihc_preflight_scale_and_timestamp():
     session = make_session()
     log = build_action_log(session, export_timestamp="2026-07-15T13:00:00")

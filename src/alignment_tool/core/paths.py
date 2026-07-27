@@ -11,6 +11,7 @@ from pathlib import Path
 AUTOSAVE_FILENAME = "session_autosave.json"
 VERSIONS_DIRNAME = "versions"
 EXPORT_CSV_FILENAME = "transform_export.csv"
+EXPORT_PNG_FILENAME = "aligned_composite.png"
 ACTION_LOG_FILENAME = "action_log.txt"
 
 
@@ -40,6 +41,10 @@ def versions_dir(output_root: Path, processing_root: Path, experiment_folder: Pa
 
 def export_csv_path(output_root: Path, processing_root: Path, experiment_folder: Path) -> Path:
     return experiment_output_dir(output_root, processing_root, experiment_folder) / EXPORT_CSV_FILENAME
+
+
+def export_png_path(output_root: Path, processing_root: Path, experiment_folder: Path) -> Path:
+    return experiment_output_dir(output_root, processing_root, experiment_folder) / EXPORT_PNG_FILENAME
 
 
 def action_log_path(output_root: Path, processing_root: Path, experiment_folder: Path) -> Path:

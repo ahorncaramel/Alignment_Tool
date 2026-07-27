@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from alignment_tool.core import export, paths
+from alignment_tool.core import composite, export, paths
 from alignment_tool.core.discovery import (
     build_initial_recordings,
     read_image_dimensions,
@@ -638,6 +638,24 @@ class MainWindow(QMainWindow):
         timestamp = _now_iso()
         csv_path = paths.export_csv_path(self._output_root, self._processing_root, self._experiment_folder)
         log_path = paths.action_log_path(self._output_root, self._processing_root, self._experiment_folder)
-        export.write_transform_csv(self._history.current, csv_path)
+        png_path = paths.export_png_path(self._output_root, self._processing_root, self._experiment_folder)
+
+        png_error = None
+        try:
+            composite.write_aligned_composite_png(self._history.current, png_path)
+        except Exception as exc:  # the CSV/log are the tool's core product (spec S11);
+            png_error = str(exc)  # a rendering failure must not block those.
+
+        export.write_transform_csv(
+            self._history.current, csv_path, aligned_image_path=str(png_path) if png_error is None else None
+        )
         export.write_action_log(self._history.current, log_path, timestamp)
-        QMessageBox.information(self, "Exported", f"Wrote:\n{csv_path}\n{log_path}")
+
+        if png_error is None:
+            QMessageBox.information(self, "Exported", f"Wrote:\n{csv_path}\n{png_path}\n{log_path}")
+        else:
+            QMessageBox.warning(
+                self,
+                "Exported (aligned image failed)",
+                f"Wrote:\n{csv_path}\n{log_path}\n\nCould not render the aligned image:\n{png_error}",
+            )

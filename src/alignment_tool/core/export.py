@@ -35,6 +35,7 @@ CSV_FIELDNAMES = [
     "window_width_px",
     "window_height_px",
     "pixel_size_source",
+    "flat_image_path",
     "ihc_image_path",
 ]
 
@@ -55,13 +56,18 @@ def _row_status(rec, preflight_status_by_id: dict[str, str]) -> str:
     return preflight_status  # "missing" | "suspected_misspelling" | "unreadable"
 
 
-def write_transform_csv(session: SessionState, out_path: Path) -> Path:
+def write_transform_csv(session: SessionState, out_path: Path, *, aligned_image_path: str | None = None) -> Path:
     """Write the transform table: one row per *discovered* recording (spec S4.4 --
     nothing silently dropped from the audit trail), not just the ones successfully
     placed. A recording with no placement (no readable flat image, not yet
     positioned, or explicitly dropped by the user) gets a row with its `status`
     explaining why and blank transform fields -- a missing short_number in the
     sequence is expected and unambiguous, since full_id is retained on every row.
+
+    Each row also carries `flat_image_path` alongside `ihc_image_path`, so the
+    file is self-contained: given only this CSV, a reader (human or automated)
+    can tell which source image is placed where in the IHC frame without
+    cross-referencing the session store or re-deriving paths from full_id.
     """
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -71,6 +77,11 @@ def write_transform_csv(session: SessionState, out_path: Path) -> Path:
     for line in CONVENTION_LINES:
         buffer.write(line + "\n")
     buffer.write(f"# scale_source: {session.scale_source}\n")
+    if aligned_image_path:
+        buffer.write(
+            f"# aligned_image: {aligned_image_path}"
+            " (flattened IHC + all placed windows, rendered from this same table)\n"
+        )
     buffer.write(
         f"# status: '{STATUS_PLACED}' rows have a real transform; all other statuses"
         " (not_placed / dropped / missing / suspected_misspelling / unreadable)"
@@ -94,6 +105,7 @@ def write_transform_csv(session: SessionState, out_path: Path) -> Path:
                 "window_width_px": rec.width_px if placed else "",
                 "window_height_px": rec.height_px if placed else "",
                 "pixel_size_source": session.scale_source,
+                "flat_image_path": rec.flat_image_path or "",
                 "ihc_image_path": session.ihc_image_path or "",
             }
         )
