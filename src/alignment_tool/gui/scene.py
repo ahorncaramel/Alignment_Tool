@@ -7,7 +7,7 @@ rather than left to insertion order.
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QPainter
 from PySide6.QtWidgets import QGraphicsScene, QGraphicsView
 
@@ -17,8 +17,6 @@ class AlignmentScene(QGraphicsScene):
 
 
 class AlignmentView(QGraphicsView):
-    scenePointClicked = Signal(object)  # QPointF, emitted only while capture_clicks is True
-
     def __init__(self, scene: AlignmentScene, parent=None):
         super().__init__(scene, parent)
         self.setRenderHint(QPainter.RenderHint.Antialiasing, True)
@@ -26,17 +24,6 @@ class AlignmentView(QGraphicsView):
         self.setDragMode(QGraphicsView.DragMode.NoDrag)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        # When True, left-clicks are captured as scene-coordinate points (e.g. for
-        # the scale-bar measuring tool) instead of being forwarded to items --
-        # otherwise a click meant to mark a point could start dragging a window.
-        self.capture_clicks = False
-
-    def mousePressEvent(self, event) -> None:
-        if self.capture_clicks and event.button() == Qt.MouseButton.LeftButton:
-            self.scenePointClicked.emit(self.mapToScene(event.pos()))
-            event.accept()
-            return
-        super().mousePressEvent(event)
 
     def wheelEvent(self, event) -> None:
         # Ctrl+wheel zooms the view; plain wheel is forwarded (default QGraphicsView

@@ -7,7 +7,6 @@ core/ and is independently tested there.
 
 from __future__ import annotations
 
-import math
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -16,6 +15,7 @@ from PySide6.QtCore import QTimer, Qt
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
     QDockWidget,
+    QDoubleSpinBox,
     QInputDialog,
     QLabel,
     QListWidget,
@@ -51,7 +51,7 @@ from alignment_tool.gui.experiment_picker import ExperimentPickerDialog
 from alignment_tool.gui.ihc_item import IhcLayerItem
 from alignment_tool.gui.ihc_select_dialog import IhcSelectDialog
 from alignment_tool.gui.preflight_dialog import PreflightDialog
-from alignment_tool.gui.scale_bar_item import ScaleBarItem
+from alignment_tool.gui.ruler_item import RulerItem
 from alignment_tool.gui.scale_panel import ScalePanel
 from alignment_tool.gui.scene import AlignmentScene, AlignmentView
 from alignment_tool.gui.window_item import RecordingWindowItem
@@ -76,13 +76,12 @@ class MainWindow(QMainWindow):
         self._window_items: dict[str, RecordingWindowItem] = {}
         self._ihc_item: IhcLayerItem | None = None
         self._selected_item: RecordingWindowItem | None = None
+        self._selected_ruler: RulerItem | None = None
 
         self._scene = AlignmentScene(self)
         self._scene.selectionChanged.connect(self._on_selection_changed)
         self._view = AlignmentView(self._scene, self)
-        self._view.scenePointClicked.connect(self._on_scale_bar_point_clicked)
         self.setCentralWidget(self._view)
-        self._scale_bar_points: list = []
 
         self._autosave_timer = QTimer(self)
         self._autosave_timer.setSingleShot(True)
@@ -128,9 +127,9 @@ class MainWindow(QMainWindow):
         fit_action.triggered.connect(self._fit_view_to_content)
         view_menu.addAction(fit_action)
 
-        scale_bar_action = QAction("Add &Scale Bar...", self)
-        scale_bar_action.triggered.connect(self._start_add_scale_bar)
-        view_menu.addAction(scale_bar_action)
+        ruler_action = QAction("Add &Ruler...", self)
+        ruler_action.triggered.connect(self._add_ruler)
+        view_menu.addAction(ruler_action)
 
     def _build_side_panel(self) -> None:
         panel = QWidget()
@@ -158,6 +157,15 @@ class MainWindow(QMainWindow):
         self._window_transparency_spin.valueChanged.connect(self._on_window_transparency_changed)
         layout.addWidget(self._window_transparency_spin)
 
+        layout.addWidget(QLabel("Selected window rotation (deg):"))
+        self._rotation_spin = QDoubleSpinBox()
+        self._rotation_spin.setRange(-3600.0, 3600.0)
+        self._rotation_spin.setDecimals(2)
+        self._rotation_spin.setSingleStep(1.0)
+        self._rotation_spin.setEnabled(False)
+        self._rotation_spin.valueChanged.connect(self._on_rotation_edited)
+        layout.addWidget(self._rotation_spin)
+
         layout.addWidget(QLabel("Selected window display contrast:"))
         self._contrast_panel = ContrastPanel()
         self._contrast_panel.setEnabled(False)
@@ -171,6 +179,15 @@ class MainWindow(QMainWindow):
         self._drop_button.setEnabled(False)
         self._drop_button.clicked.connect(self._drop_selected_recording)
         layout.addWidget(self._drop_button)
+
+        layout.addWidget(QLabel("Selected ruler length (px):"))
+        self._ruler_length_spin = QDoubleSpinBox()
+        self._ruler_length_spin.setRange(1.0, 10_000_000.0)
+        self._ruler_length_spin.setDecimals(1)
+        self._ruler_length_spin.setSingleStep(10.0)
+        self._ruler_length_spin.setEnabled(False)
+        self._ruler_length_spin.valueChanged.connect(self._on_ruler_length_edited)
+        layout.addWidget(self._ruler_length_spin)
 
         layout.addStretch()
 
@@ -363,50 +380,46 @@ class MainWindow(QMainWindow):
             Qt.AspectRatioMode.KeepAspectRatio,
         )
 
-    # ---- Scale bar (visual aid, not part of the export) ----------------------
+    # ---- Ruler (visual aid, not part of the export) ------------------------
 
-    def _start_add_scale_bar(self) -> None:
+    def _add_ruler(self) -> None:
+        """Create a draggable, resizable ruler: a line divided into equal
+        marks (default 5 x 1000 um = 5000 um). Drag it onto the IHC image and
+        drag its end handle to stretch it to match an existing reference bar,
+        then use the division marks to eyeball a recording window's harp
+        spacing while adjusting the batch scale.
+        """
         if self._history is None:
             return
-        self._scale_bar_points = []
-        self._view.capture_clicks = True
-        self.statusBar().showMessage("Scale bar: click the FIRST end of the existing reference bar on the IHC image.")
-
-    def _on_scale_bar_point_clicked(self, point) -> None:
-        if not self._view.capture_clicks:
+        total_um, ok = QInputDialog.getDouble(
+            self, "Add Ruler", "Total ruler length represents (µm):", 5000.0, 0.0001, 1e9, 2
+        )
+        if not ok:
             return
-        self._scale_bar_points.append(point)
-        if len(self._scale_bar_points) == 1:
-            self.statusBar().showMessage("Scale bar: click the SECOND end of the existing reference bar.")
+        division_um, ok = QInputDialog.getDouble(
+            self, "Add Ruler", "Distance between division marks (µm):", 1000.0, 0.0001, total_um, 2
+        )
+        if not ok:
+            return
+
+        pixel_size_ihc = self._history.current.pixel_size_ihc.value_um_per_px
+        if pixel_size_ihc:
+            # A good starting estimate from metadata -- still just a starting
+            # point, refined by dragging the handle to match the real bar.
+            length_px = total_um / pixel_size_ihc
+        elif self._ihc_item is not None:
+            length_px = self._ihc_item.width_px * 0.3
         else:
-            self._view.capture_clicks = False
-            self.statusBar().clearMessage()
-            self._finish_add_scale_bar()
+            length_px = 300.0
 
-    def _finish_add_scale_bar(self) -> None:
-        p1, p2 = self._scale_bar_points
-        reference_px = math.hypot(p2.x() - p1.x(), p2.y() - p1.y())
-        if reference_px <= 0:
-            QMessageBox.warning(self, "Scale bar", "Those two points were the same -- try again.")
-            return
-
-        reference_um, ok = QInputDialog.getDouble(
-            self, "Scale bar", "The bar you just measured represents (µm):", 5000.0, 0.0001, 1e9, 2
-        )
-        if not ok:
-            return
-        new_um, ok = QInputDialog.getDouble(
-            self, "Scale bar", "The new scale bar should represent (µm):", 1000.0, 0.0001, 1e9, 2
-        )
-        if not ok:
-            return
-
-        new_px_length = reference_px * (new_um / reference_um)
-        bar_item = ScaleBarItem(new_px_length, f"{new_um:g} µm")
-        bar_item.setPos(p2.x() + reference_px * 0.15, p2.y())
-        self._scene.addItem(bar_item)
+        ruler = RulerItem(length_px, total_um, division_um, on_length_changed=self._on_ruler_length_changed)
+        view_centre = self._view.mapToScene(self._view.viewport().rect().center())
+        ruler.setPos(view_centre)
+        self._scene.addItem(ruler)
         self.statusBar().showMessage(
-            f"Added a {new_um:g} µm scale bar ({new_px_length:.1f} px long). Drag it wherever you need it.", 8000
+            f"Added a {total_um:g} µm ruler with {ruler.num_divisions()} divisions of {division_um:g} µm each. "
+            "Drag it onto the image; drag its square handle to stretch it to match.",
+            8000,
         )
 
     def _build_current_session_state(self) -> SessionState:
@@ -474,6 +487,12 @@ class MainWindow(QMainWindow):
     # ---- Item-driven commits ----------------------------------------------
 
     def _on_window_commit(self, item: RecordingWindowItem) -> None:
+        # Mouse-wheel rotation (window_item.py) bypasses the rotation spin box,
+        # so keep it in sync if the wheel-rotated window is the selected one.
+        if item is self._selected_item:
+            self._rotation_spin.blockSignals(True)
+            self._rotation_spin.setValue(item.theta_deg())
+            self._rotation_spin.blockSignals(False)
         self._commit()
 
     def _on_scale_request(self, factor: float) -> None:
@@ -498,16 +517,36 @@ class MainWindow(QMainWindow):
             self._selected_item.set_transparency_step(step)
             self._commit()
 
+    def _on_rotation_edited(self, theta_deg: float) -> None:
+        if self._selected_item:
+            self._selected_item.set_theta_deg(theta_deg)
+            self._commit()
+
     def _on_contrast_edited(self, display_min: float, display_max: float) -> None:
         if self._selected_item:
             self._selected_item.set_contrast(display_min, display_max)
             self._commit()
 
+    def _on_ruler_length_edited(self, length_px: float) -> None:
+        if self._selected_ruler:
+            self._selected_ruler.set_length_px(length_px)
+
+    def _on_ruler_length_changed(self, length_px: float) -> None:
+        # Fired by the ruler itself (e.g. dragging its handle) so the panel
+        # field stays in sync regardless of which interaction the user used.
+        self._ruler_length_spin.blockSignals(True)
+        self._ruler_length_spin.setValue(length_px)
+        self._ruler_length_spin.blockSignals(False)
+
     def _on_selection_changed(self) -> None:
-        selected = [i for i in self._scene.selectedItems() if isinstance(i, RecordingWindowItem)]
-        self._selected_item = selected[0] if selected else None
+        selected_windows = [i for i in self._scene.selectedItems() if isinstance(i, RecordingWindowItem)]
+        selected_rulers = [i for i in self._scene.selectedItems() if isinstance(i, RulerItem)]
+        self._selected_item = selected_windows[0] if selected_windows else None
+        self._selected_ruler = selected_rulers[0] if selected_rulers else None
+
         has_selection = self._selected_item is not None
         self._window_transparency_spin.setEnabled(has_selection)
+        self._rotation_spin.setEnabled(has_selection)
         self._contrast_panel.setEnabled(has_selection)
         self._drop_button.setEnabled(has_selection)
         if has_selection:
@@ -518,6 +557,9 @@ class MainWindow(QMainWindow):
                 round((1.0 - item.opacity()) / 0.1)
             )
             self._window_transparency_spin.blockSignals(False)
+            self._rotation_spin.blockSignals(True)
+            self._rotation_spin.setValue(item.theta_deg())
+            self._rotation_spin.blockSignals(False)
             lo, hi = float(item._array.min()), float(item._array.max())
             display_min, display_max = item.contrast()
             self._contrast_panel.set_range(
@@ -525,8 +567,17 @@ class MainWindow(QMainWindow):
                 display_max if display_max is not None else hi,
                 full_range=(lo, hi),
             )
+        elif self._selected_ruler is not None:
+            self._selection_label.setText("Selected: ruler")
         else:
             self._selection_label.setText("No window selected")
+
+        has_ruler_selection = self._selected_ruler is not None
+        self._ruler_length_spin.setEnabled(has_ruler_selection)
+        if has_ruler_selection:
+            self._ruler_length_spin.blockSignals(True)
+            self._ruler_length_spin.setValue(self._selected_ruler.length_px())
+            self._ruler_length_spin.blockSignals(False)
 
     def _drop_selected_recording(self) -> None:
         """Explicit user decision to exclude a recording (spec: independent of
