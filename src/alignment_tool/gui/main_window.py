@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QPushButton,
+    QScrollArea,
     QSpinBox,
     QVBoxLayout,
     QWidget,
@@ -148,6 +149,11 @@ class MainWindow(QMainWindow):
         layout.addWidget(QLabel("Recordings (double-click to jump to one):"))
         self._recordings_list = QListWidget()
         self._recordings_list.itemDoubleClicked.connect(self._on_recording_list_activated)
+        # Without a cap, this list's default "expand to fill available space"
+        # policy eats the whole dock, pushing every control below it (e.g. the
+        # CYP11B2 group) out of view -- the scroll area below is a second,
+        # independent safety net for whatever doesn't fit even with this cap.
+        self._recordings_list.setMaximumHeight(160)
         layout.addWidget(self._recordings_list)
 
         self._scale_panel = ScalePanel()
@@ -267,8 +273,15 @@ class MainWindow(QMainWindow):
 
         layout.addStretch()
 
+        # The panel has grown past what fits in a typical dock height (e.g.
+        # the CYP11B2 group was unreachable, with nothing to scroll it into
+        # view) -- a resizable scroll area is the fix, not trimming controls.
+        scroll = QScrollArea()
+        scroll.setWidget(panel)
+        scroll.setWidgetResizable(True)
+
         dock = QDockWidget("Controls", self)
-        dock.setWidget(panel)
+        dock.setWidget(scroll)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, dock)
 
         self._refresh_lock_ui()  # start blinded/unlocked, matching self._alignment_locked's default
