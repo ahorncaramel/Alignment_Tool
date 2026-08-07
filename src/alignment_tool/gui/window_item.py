@@ -10,11 +10,21 @@ from pathlib import Path
 from typing import Callable
 
 from PySide6.QtCore import QPointF, Qt
-from PySide6.QtGui import QBrush, QColor
+from PySide6.QtGui import QBrush, QColor, QPen
 from PySide6.QtWidgets import QGraphicsItem, QGraphicsPixmapItem, QGraphicsRectItem
 
+from alignment_tool.core.session import STATE_NO, STATE_UNDECIDED, STATE_YES
 from alignment_tool.gui.image_loading import array_to_qpixmap, load_image_array
 from alignment_tool.gui.label_item import make_label
+
+# Colours for the activity outline (spec conversation: green = activity seen,
+# red = no activity, no outline = undecided). Kept in one place and mirrored
+# in core/composite.py's _ACTIVITY_OUTLINE_COLOR for the exported PNG -- if
+# you change one, change the other.
+_ACTIVITY_OUTLINE_PENS = {
+    STATE_YES: QColor(40, 200, 40),
+    STATE_NO: QColor(220, 40, 40),
+}
 
 # Rotation direction note: transform.py defines positive theta_deg as visually
 # counter-clockwise under a y-down axis convention. Qt's QGraphicsItem.setRotation
@@ -50,6 +60,12 @@ class RecordingWindowItem(QGraphicsPixmapItem):
 
         self._refresh_pixmap()
 
+        # Alignment lock (spec conversation): while locked, placement (drag/
+        # rotate/scale) is frozen -- the deliberate "I am done aligning" gate
+        # that also unblinds activity/cyp11b2 marking in the side panel. The
+        # item stays selectable either way, so it can still be picked to view/
+        # set its activity or cyp11b2 state while locked.
+        self._locked = False
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, True)
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, True)
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges, True)
@@ -69,6 +85,32 @@ class RecordingWindowItem(QGraphicsPixmapItem):
         self._dropped_overlay.setPen(Qt.PenStyle.NoPen)
         self._dropped_overlay.setZValue(2)
         self._dropped_overlay.setVisible(False)
+
+        # Activity outline: an unfilled border around the window, green for
+        # "activity seen", red for "no activity", hidden while undecided (the
+        # default -- must never come up already coloured). This is a separate,
+        # independently-set judgement made after alignment (spec conversation:
+        # align first, unbiased; mark activity afterwards); it is not tied to
+        # placement or to dropped/transparency state. cyp11b2_state (below) is
+        # deliberately given NO on-screen treatment here.
+        self._activity_state = STATE_UNDECIDED
+        self._activity_outline = QGraphicsRectItem(self.boundingRect(), self)
+        self._activity_outline.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+        # Cosmetic: pen stays a constant width on screen regardless of the
+        # item's own scale/rotation (batch scale can be as small as ~0.05,
+        # where a non-cosmetic pen width would be invisible or huge).
+        outline_pen = QPen(QColor(0, 0, 0))
+        outline_pen.setWidth(4)
+        outline_pen.setCosmetic(True)
+        self._activity_outline.setPen(outline_pen)
+        self._activity_outline.setZValue(3)  # above the dropped tint, below the label (z=1000)
+        self._activity_outline.setVisible(False)
+
+        # cyp11b2_state: stored only, per the spec conversation -- the user is
+        # not yet sure how to visualise it, and drawing anything for it now
+        # would bias the (separate, blinded) act of judging it. Do not add a
+        # visual cue here without an explicit decision to do so.
+        self._cyp11b2_state = STATE_UNDECIDED
 
     def _refresh_pixmap(self) -> None:
         pixmap = array_to_qpixmap(self._array, self._display_min, self._display_max)
@@ -91,6 +133,47 @@ class RecordingWindowItem(QGraphicsPixmapItem):
 
     def is_dropped(self) -> bool:
         return self._dropped
+
+    def set_locked(self, locked: bool) -> None:
+        """Gate interactive placement edits (drag + wheel rotate/scale-request)
+        without touching programmatic ones -- set_placement()/set_scale()/
+        set_theta_deg() are also called from main_window when *restoring* a
+        session (including a locked one), so they must keep working regardless
+        of this flag. Selectability is deliberately left alone: a locked
+        window must still be selectable so its activity/cyp11b2 state can be
+        set from the side panel.
+        """
+        self._locked = locked
+        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, not locked)
+
+    def is_locked(self) -> bool:
+        return self._locked
+
+    def set_activity_state(self, state: str) -> None:
+        if state not in (STATE_UNDECIDED, STATE_YES, STATE_NO):
+            raise ValueError(f"invalid activity_state: {state!r}")
+        self._activity_state = state
+        color = _ACTIVITY_OUTLINE_PENS.get(state)
+        if color is None:
+            self._activity_outline.setVisible(False)
+            return
+        pen = self._activity_outline.pen()
+        pen.setColor(color)
+        self._activity_outline.setPen(pen)
+        self._activity_outline.setVisible(True)
+
+    def activity_state(self) -> str:
+        return self._activity_state
+
+    def set_cyp11b2_state(self, state: str) -> None:
+        # No visual effect by design (see __init__ note) -- purely round-trips
+        # through commit/session/export.
+        if state not in (STATE_UNDECIDED, STATE_YES, STATE_NO):
+            raise ValueError(f"invalid cyp11b2_state: {state!r}")
+        self._cyp11b2_state = state
+
+    def cyp11b2_state(self) -> str:
+        return self._cyp11b2_state
 
     def set_transparency_step(self, step: int) -> None:
         step = max(0, min(9, step))
@@ -127,18 +210,29 @@ class RecordingWindowItem(QGraphicsPixmapItem):
             self._on_commit(self)
 
     def wheelEvent(self, event) -> None:
+        if self._locked:
+            # Wheel-driven rotate and ctrl+wheel-driven scale-request are both
+            # placement edits -- frozen while locked, same as drag (see
+            # set_locked()). Ignore (not accept) so the event can still
+            # propagate/scroll a parent view if applicable.
+            event.ignore()
+            return
         ctrl = bool(event.modifiers() & Qt.KeyboardModifier.ControlModifier)
+        # angleDelta().y(), not the removed QWheelEvent.delta() (PySide6 >= 6.x
+        # dropped that binding entirely -- calling it raises AttributeError,
+        # which silently broke both wheel-rotate and ctrl+wheel-scale).
+        wheel_y = event.angleDelta().y()
         if ctrl and self._on_scale_request:
             # Ctrl+wheel over a window == "drag-to-resize" (spec S5.3): it changes
             # the one shared batch scale, not this window alone.
-            factor = 1.05 if event.delta() > 0 else 1 / 1.05
+            factor = 1.05 if wheel_y > 0 else 1 / 1.05
             self._on_scale_request(factor)
             event.accept()
             return
         # Plain wheel = 1 deg/step, Shift+wheel = 10 deg/step (spec S6 leaves the
         # rotate interaction to implementer discretion).
         step_deg = 10.0 if event.modifiers() & Qt.KeyboardModifier.ShiftModifier else 1.0
-        direction = 1.0 if event.delta() > 0 else -1.0
+        direction = 1.0 if wheel_y > 0 else -1.0
         self.setRotation(self.rotation() + direction * step_deg)
         if self._on_commit:
             self._on_commit(self)

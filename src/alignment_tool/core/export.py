@@ -22,12 +22,20 @@ CONVENTION_LINES = [
     "#   rotation    = degrees, positive = counter-clockwise as viewed on screen",
     "#   scale       = unitless; ihc_length_px = window_length_px * scale",
     "#   scale is a single value shared by every row in this file (spec S5.1)",
+    "#   activity_state = 'undecided' | 'yes' | 'no' -- whether calcium activity was"
+    " observed in this recording; a separate, unbiased judgement made independently"
+    " of alignment (on screen: green = yes, red = no, no outline = undecided)",
+    "#   cyp11b2_state   = 'undecided' | 'yes' | 'no' -- whether this window's placement"
+    " sits over any CYP11B2-positive area on the IHC image at all (whole-window,"
+    " not quantified); a separate, unbiased judgement, not shown on screen",
 ]
 
 CSV_FIELDNAMES = [
     "full_id",
     "short_number",
     "status",
+    "activity_state",
+    "cyp11b2_state",
     "x",
     "y",
     "rotation_deg",
@@ -98,6 +106,10 @@ def write_transform_csv(session: SessionState, out_path: Path, *, aligned_image_
                 "full_id": rec.full_id,
                 "short_number": rec.short_number,
                 "status": status,
+                # Independent of placement/status on purpose: these are separate
+                # unbiased judgements (spec conversation), not derived from it.
+                "activity_state": rec.activity_state,
+                "cyp11b2_state": rec.cyp11b2_state,
                 "x": rec.placement.x if placed else "",
                 "y": rec.placement.y if placed else "",
                 "rotation_deg": rec.placement.theta_deg if placed else "",

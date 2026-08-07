@@ -20,6 +20,14 @@ from pathlib import Path
 
 from alignment_tool.core.transform import SimilarityPlacement
 
+# Tri-state marker vocabulary shared by both blinded-judgement fields below
+# (activity_state, cyp11b2_state). "undecided" is the only valid starting
+# state -- a recording must never be silently defaulted to "yes"/"no".
+STATE_UNDECIDED = "undecided"
+STATE_YES = "yes"
+STATE_NO = "no"
+MARKER_STATES = (STATE_UNDECIDED, STATE_YES, STATE_NO)
+
 
 @dataclass
 class PixelSize:
@@ -48,6 +56,20 @@ class RecordingState:
     per the pre-flight report) -- that is a normal, expected state, not an error.
     `dropped` is a separate, explicit user decision to exclude an otherwise-placeable
     recording; it is independent of the pre-flight image status.
+
+    `activity_state` and `cyp11b2_state` are two independent, separately-recorded
+    yes/no/undecided judgements, each its own deliberately unbiased pass over the
+    recordings (never inferred from the other, never inferred from placement):
+      - `activity_state`: did this recording show calcium activity at all.
+        Rendered on screen as a green/red outline around the window (see
+        gui/window_item.py); undecided = no outline.
+      - `cyp11b2_state`: does this window's placement sit over any
+        CYP11B2-positive area on the IHC image at all (whole-window yes/no,
+        no quantification -- a future version may refine this to per-quadrant).
+        Deliberately given no on-screen visual treatment in v1, so judging it
+        is never biased by a colour already drawn on the window; stored for
+        export only.
+    Both start "undecided" and must never be silently defaulted to yes/no.
     """
 
     full_id: str  # e.g. "Rec_006_03_01" -- retained everywhere, never dropped from the ID
@@ -60,6 +82,8 @@ class RecordingState:
     # 0..9 -> 0%..90% transparency in 10-point steps (spec S8.1); 0 = fully opaque.
     transparency_step: int = 0
     contrast: ContrastSettings = field(default_factory=ContrastSettings)
+    activity_state: str = STATE_UNDECIDED  # "undecided" | "yes" | "no"
+    cyp11b2_state: str = STATE_UNDECIDED  # "undecided" | "yes" | "no"
 
 
 @dataclass
@@ -85,6 +109,15 @@ class SessionState:
     preflight_report: list[PreflightEntry]
     created_at: str
     last_modified: str
+    # Session-wide gate (not per-recording): while False, placement (drag/
+    # rotate/scale) is editable and activity_state/cyp11b2_state marking is
+    # blinded (hidden) -- the user must make a deliberate mental commitment
+    # ("I am done aligning") by locking before either judgement becomes
+    # available. Toggling back and forth is expected and must never discard
+    # anything already marked (see gui/main_window.py's lock toggle, which
+    # only ever flips this flag). Defaults False so a freshly-created session
+    # always starts in the alignment phase.
+    alignment_locked: bool = False
 
 
 def to_dict(session: SessionState) -> dict:
@@ -103,6 +136,8 @@ def from_dict(data: dict) -> SessionState:
             dropped=r.get("dropped", False),
             transparency_step=r.get("transparency_step", 0),
             contrast=ContrastSettings(**r.get("contrast", {})),
+            activity_state=r.get("activity_state", STATE_UNDECIDED),
+            cyp11b2_state=r.get("cyp11b2_state", STATE_UNDECIDED),
         )
         for r in data["recordings"]
     ]
@@ -121,6 +156,7 @@ def from_dict(data: dict) -> SessionState:
         preflight_report=preflight_report,
         created_at=data["created_at"],
         last_modified=data["last_modified"],
+        alignment_locked=data.get("alignment_locked", False),
     )
 
 

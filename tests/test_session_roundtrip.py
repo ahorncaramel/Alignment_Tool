@@ -1,6 +1,9 @@
 import pytest
 
 from alignment_tool.core.session import (
+    STATE_NO,
+    STATE_UNDECIDED,
+    STATE_YES,
     ContrastSettings,
     PixelSize,
     PreflightEntry,
@@ -36,6 +39,8 @@ def make_session(scale=1.0) -> SessionState:
                 placement=SimilarityPlacement(theta_deg=12.0, x=100.0, y=200.0),
                 transparency_step=2,
                 contrast=ContrastSettings(display_min=10.0, display_max=200.0),
+                activity_state=STATE_YES,
+                cyp11b2_state=STATE_NO,
             ),
             RecordingState(
                 full_id="Rec_006_03_02",
@@ -59,6 +64,40 @@ def test_to_dict_from_dict_round_trip_is_exact():
     session = make_session()
     restored = from_dict(to_dict(session))
     assert restored == session
+
+
+def test_alignment_locked_defaults_false_and_round_trips():
+    session = make_session()
+    assert session.alignment_locked is False
+
+    locked = from_dict({**to_dict(session), "alignment_locked": True})
+    assert locked.alignment_locked is True
+    assert from_dict(to_dict(locked)).alignment_locked is True
+
+
+def test_from_dict_defaults_alignment_locked_to_false_for_old_sessions():
+    """A session autosaved before this feature existed has no alignment_locked
+    key at all -- must load as unlocked, not crash."""
+    session = make_session()
+    data = to_dict(session)
+    del data["alignment_locked"]
+    restored = from_dict(data)
+    assert restored.alignment_locked is False
+
+
+def test_from_dict_defaults_activity_and_cyp11b2_state_to_undecided_for_old_sessions():
+    """A session autosaved before this feature existed has no activity_state/
+    cyp11b2_state keys at all -- loading it must not crash and must not
+    silently invent a decided state.
+    """
+    session = make_session()
+    data = to_dict(session)
+    for rec in data["recordings"]:
+        del rec["activity_state"]
+        del rec["cyp11b2_state"]
+    restored = from_dict(data)
+    assert all(r.activity_state == STATE_UNDECIDED for r in restored.recordings)
+    assert all(r.cyp11b2_state == STATE_UNDECIDED for r in restored.recordings)
 
 
 def test_json_save_load_round_trip_reproduces_placements_exactly(tmp_path):
