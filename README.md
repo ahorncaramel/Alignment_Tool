@@ -69,30 +69,56 @@ Top to bottom:
   hidden or deleted, and clicking the same button un-drops it in one step
   regardless of what else you've edited since.
 - **Lock alignment / Unlock alignment** -- see below.
-- **Activity** and **CYP11B2** groups -- only visible once locked, see below.
+- **Start CYP11B2 Review / Start Activity Review**, **Activity** and
+  **CYP11B2** manual groups -- only visible once locked, see below.
 - **Selected ruler length (px)** -- active only when a ruler (not a
   recording) is selected; see "Ruler" below.
 
-## Alignment lock, then Activity / CYP11B2 marking
+## Alignment lock, then CYP11B2 review, then Activity review
 
-This is a deliberate two-pass workflow: align first, unbiased, then judge
-afterwards.
+A deliberate three-pass workflow: align first unbiased, then judge CYP11B2
+before Activity, so neither judgement is coloured by already knowing the
+other or the placement.
 
 1. While **unlocked** (the default), placement (drag/rotate/scale) is
-   editable, and the Activity/CYP11B2 controls are **hidden entirely** --
-   not just disabled -- so there's nothing to glance at while still aligning.
-2. Click **Lock alignment** once you're done positioning a recording.
-   Placement becomes frozen (drag/wheel-rotate/batch-scale stop affecting
-   locked windows), and the Activity/CYP11B2 groups appear.
-3. **Activity**: mark each selected recording "Activity (green)", "No
-   activity (red)", or "Undecided". Shown live as a green/red outline on the
-   window and carried into the exported PNG.
-4. **CYP11B2**: mark "Present" / "Absent" / "Undecided" -- independent of
-   Activity, and deliberately given **no on-screen visual treatment** (not
-   even in the export), so judging one doesn't visually bias the other.
-5. **Unlock alignment** re-hides the two groups and re-enables placement
-   editing, but never discards anything already marked -- toggling back and
-   forth to fix a placement is expected, not a one-way commitment.
+   editable, and every review control is **hidden entirely** -- not just
+   disabled -- so there's nothing to glance at while still aligning.
+2. Click **Lock alignment** once you're done positioning every recording.
+   Placement becomes frozen, and the review controls appear.
+3. Click **Start CYP11B2 Review**. This walks the aligned recordings one at
+   a time: every other window is hidden, the IHC is forced fully visible,
+   and the current window starts fully opaque. Use **"Hide recording (show
+   IHC only)"** to flip it fully transparent and inspect the bare tissue
+   underneath, then flip back, as many times as you need. Click **Yes /
+   No / Undecided** to record a decision and auto-advance to the next one
+   (**<- Previous** / **Skip ->** to navigate without deciding, **Stop
+   review** to bail out and resume later). All the temporary
+   hide/show/IHC-visibility changes are undone automatically when the
+   review ends -- your normal transparency settings return exactly as they
+   were.
+4. **Start Activity Review** stays disabled until every aligned recording
+   has been through step 3 -- even if your answer for one was "Undecided",
+   that still counts as reviewed. This is enforced, not just suggested: you
+   cannot judge Activity for anything until CYP11B2 review is complete for
+   everything. Once unlocked, it works exactly like step 3, and Activity is
+   additionally shown live as a green/red outline on the window (and
+   carried into the exported PNG); CYP11B2 deliberately gets **no on-screen
+   visual treatment** anywhere, so judging one is never visually biased by
+   the other.
+5. The **manual Activity/CYP11B2 groups** (Present/Absent/Undecided-style
+   buttons for whichever single recording is currently selected) still work
+   for one-off corrections outside the guided review, and count as
+   "reviewed" the same way a guided step does.
+6. **Unlock alignment** re-hides all of the above and re-enables placement
+   editing, but never discards anything already marked or reviewed --
+   toggling back and forth to fix a placement is expected, not a one-way
+   commitment.
+
+Sessions saved before this guided-review feature existed load fine: a
+recording that already had a real CYP11B2/Activity decision is treated as
+already reviewed; one still at the untouched "undecided" default is treated
+as not yet reviewed (so it can't be misread as "reviewed, genuinely
+undecided" and skipped).
 
 ## Ruler (visual aid only -- not exported, not part of the transform)
 
@@ -125,8 +151,10 @@ one-click reversal independent of how many other edits happened in between.
 - **Export Transform CSV...** writes three files together to
   `<output>/<same path as the experiment under Processing>/`:
   - **`transform_export.csv`** -- one row per *discovered* recording (not
-    just placed ones), with its status, x/y/rotation/scale, both the flat
-    image path and the IHC image path, and an explicit coordinate-convention
+    just placed ones), with its status, x/y/rotation/scale, CYP11B2/Activity
+    state *and* whether each was actually reviewed (see above -- "undecided"
+    is a real answer, distinct from "not reviewed yet"), both the flat image
+    path and the IHC image path, and an explicit coordinate-convention
     header -- self-contained enough to read without the tool.
   - **`aligned_composite.png`** -- the IHC image with every placed,
     non-dropped recording window rendered on top at its true

@@ -28,14 +28,21 @@ CONVENTION_LINES = [
     "#   cyp11b2_state   = 'undecided' | 'yes' | 'no' -- whether this window's placement"
     " sits over any CYP11B2-positive area on the IHC image at all (whole-window,"
     " not quantified); a separate, unbiased judgement, not shown on screen",
+    "#   *_reviewed      = whether that judgement pass has actually been made for this"
+    " recording -- 'undecided' is itself a valid decision, so *_state alone can't tell"
+    " apart 'decided: undecided' from 'not reviewed yet'; cyp11b2_reviewed must be true"
+    " for every row before activity_state is meaningful (bias control: CYP11B2 is"
+    " judged first, blind to activity)",
 ]
 
 CSV_FIELDNAMES = [
     "full_id",
     "short_number",
     "status",
-    "activity_state",
     "cyp11b2_state",
+    "cyp11b2_reviewed",
+    "activity_state",
+    "activity_reviewed",
     "x",
     "y",
     "rotation_deg",
@@ -108,8 +115,10 @@ def write_transform_csv(session: SessionState, out_path: Path, *, aligned_image_
                 "status": status,
                 # Independent of placement/status on purpose: these are separate
                 # unbiased judgements (spec conversation), not derived from it.
-                "activity_state": rec.activity_state,
                 "cyp11b2_state": rec.cyp11b2_state,
+                "cyp11b2_reviewed": rec.cyp11b2_reviewed,
+                "activity_state": rec.activity_state,
+                "activity_reviewed": rec.activity_reviewed,
                 "x": rec.placement.x if placed else "",
                 "y": rec.placement.y if placed else "",
                 "rotation_deg": rec.placement.theta_deg if placed else "",

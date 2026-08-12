@@ -70,6 +70,16 @@ class RecordingState:
         is never biased by a colour already drawn on the window; stored for
         export only.
     Both start "undecided" and must never be silently defaulted to yes/no.
+
+    `cyp11b2_reviewed` / `activity_reviewed` are separate from the *_state
+    fields on purpose: "undecided" is itself a valid, deliberate answer, so it
+    cannot also mean "nobody has looked at this recording yet". These flags
+    are what the guided review process (gui/main_window.py) uses to know
+    whether a recording still needs a decision, and what gates the Activity
+    review from starting until CYP11B2 review is complete for every eligible
+    recording (bias control: CYP11B2 must be judged first, spec conversation).
+    Set True by either the guided review or the manual per-window buttons --
+    either way counts as "reviewed".
     """
 
     full_id: str  # e.g. "Rec_006_03_01" -- retained everywhere, never dropped from the ID
@@ -84,6 +94,27 @@ class RecordingState:
     contrast: ContrastSettings = field(default_factory=ContrastSettings)
     activity_state: str = STATE_UNDECIDED  # "undecided" | "yes" | "no"
     cyp11b2_state: str = STATE_UNDECIDED  # "undecided" | "yes" | "no"
+    cyp11b2_reviewed: bool = False
+    activity_reviewed: bool = False
+
+
+def eligible_for_review(session: SessionState) -> list[RecordingState]:
+    """Recordings eligible for CYP11B2/activity review, in short_number order:
+    placed and not dropped -- the same condition gui/main_window.py uses to
+    decide which recordings get an on-screen window at all, so this always
+    matches what's actually visible to review.
+    """
+    eligible = [r for r in session.recordings if r.placement is not None and not r.dropped]
+    return sorted(eligible, key=lambda r: r.short_number)
+
+
+def cyp11b2_review_complete(session: SessionState) -> bool:
+    """Whether every eligible recording has been through the CYP11B2 review
+    (regardless of what they were decided as, including "undecided" -- see
+    RecordingState.cyp11b2_reviewed). This is the bias-control gate: the
+    Activity review must not be startable until this is True.
+    """
+    return all(r.cyp11b2_reviewed for r in eligible_for_review(session))
 
 
 @dataclass
@@ -124,6 +155,20 @@ def to_dict(session: SessionState) -> dict:
     return dataclasses.asdict(session)
 
 
+def _reviewed_default(r: dict, state_key: str) -> bool:
+    """Backward-compat default for a session file saved before the guided
+    review process existed (no cyp11b2_reviewed/activity_reviewed key at
+    all): if that recording already has a real yes/no decision recorded
+    under the old manual-only marking, treat it as already reviewed -- don't
+    force re-review of something already decided. If it's still at the
+    untouched "undecided" default, treat it as NOT reviewed (can't tell
+    "looked at it, genuinely undecided" apart from "never looked at it", and
+    the whole point of this flag is to not silently skip the bias-control
+    gate, so the safe default is to require review).
+    """
+    return r.get(state_key, STATE_UNDECIDED) != STATE_UNDECIDED
+
+
 def from_dict(data: dict) -> SessionState:
     recordings = [
         RecordingState(
@@ -138,6 +183,8 @@ def from_dict(data: dict) -> SessionState:
             contrast=ContrastSettings(**r.get("contrast", {})),
             activity_state=r.get("activity_state", STATE_UNDECIDED),
             cyp11b2_state=r.get("cyp11b2_state", STATE_UNDECIDED),
+            cyp11b2_reviewed=r.get("cyp11b2_reviewed", _reviewed_default(r, "cyp11b2_state")),
+            activity_reviewed=r.get("activity_reviewed", _reviewed_default(r, "activity_state")),
         )
         for r in data["recordings"]
     ]
