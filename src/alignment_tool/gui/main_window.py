@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QPushButton,
+    QScrollArea,
     QSpinBox,
     QVBoxLayout,
     QWidget,
@@ -87,8 +88,10 @@ class MainWindow(QMainWindow):
         self._autosave_timer.setSingleShot(True)
         self._autosave_timer.timeout.connect(self._do_autosave)
 
-        self._build_menu()
+        # Side panel built first so its dock widget exists in time for
+        # _build_menu() to add a View-menu toggle for it.
         self._build_side_panel()
+        self._build_menu()
         self.statusBar().showMessage("No experiment open")
 
         QTimer.singleShot(0, self.open_experiment_flow)
@@ -121,6 +124,16 @@ class MainWindow(QMainWindow):
         self._redo_action.triggered.connect(self._redo)
         edit_menu.addAction(self._redo_action)
 
+        delete_ruler_action = QAction("Delete Selected &Ruler", self)
+        delete_ruler_action.setShortcut(QKeySequence.StandardKey.Delete)
+        # Scoped to the canvas (not window-wide) so Delete still works normally
+        # for text editing in the panel's spin boxes -- the menu item itself
+        # always works regardless of focus.
+        delete_ruler_action.setShortcutContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        delete_ruler_action.triggered.connect(self._remove_selected_ruler)
+        self._view.addAction(delete_ruler_action)
+        edit_menu.addAction(delete_ruler_action)
+
         view_menu = self.menuBar().addMenu("&View")
         fit_action = QAction("&Fit to Window", self)
         fit_action.setShortcut("Ctrl+0")
@@ -131,6 +144,11 @@ class MainWindow(QMainWindow):
         ruler_action.triggered.connect(self._add_ruler)
         view_menu.addAction(ruler_action)
 
+        view_menu.addSeparator()
+        controls_toggle_action = self._controls_dock.toggleViewAction()
+        controls_toggle_action.setText("Show &Controls Panel")
+        view_menu.addAction(controls_toggle_action)
+
     def _build_side_panel(self) -> None:
         panel = QWidget()
         layout = QVBoxLayout(panel)
@@ -138,6 +156,11 @@ class MainWindow(QMainWindow):
         layout.addWidget(QLabel("Recordings (double-click to jump to one):"))
         self._recordings_list = QListWidget()
         self._recordings_list.itemDoubleClicked.connect(self._on_recording_list_activated)
+        # Without a cap, this list's default "expand to fill available space"
+        # policy eats the whole dock, pushing every control below it out of
+        # view -- the scroll area below is a second, independent safety net
+        # for whatever doesn't fit even with this cap.
+        self._recordings_list.setMaximumHeight(160)
         layout.addWidget(self._recordings_list)
 
         self._scale_panel = ScalePanel()
@@ -189,11 +212,23 @@ class MainWindow(QMainWindow):
         self._ruler_length_spin.valueChanged.connect(self._on_ruler_length_edited)
         layout.addWidget(self._ruler_length_spin)
 
+        self._remove_ruler_button = QPushButton("Remove selected ruler")
+        self._remove_ruler_button.setEnabled(False)
+        self._remove_ruler_button.clicked.connect(self._remove_selected_ruler)
+        layout.addWidget(self._remove_ruler_button)
+
         layout.addStretch()
 
-        dock = QDockWidget("Controls", self)
-        dock.setWidget(panel)
-        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, dock)
+        # A resizable scroll area so the panel is always fully reachable
+        # regardless of dock/window height, rather than silently clipping
+        # whatever doesn't fit.
+        scroll = QScrollArea()
+        scroll.setWidget(panel)
+        scroll.setWidgetResizable(True)
+
+        self._controls_dock = QDockWidget("Controls", self)
+        self._controls_dock.setWidget(scroll)
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self._controls_dock)
 
     # ---- Experiment open flow --------------------------------------------
 
@@ -579,10 +614,18 @@ class MainWindow(QMainWindow):
 
         has_ruler_selection = self._selected_ruler is not None
         self._ruler_length_spin.setEnabled(has_ruler_selection)
+        self._remove_ruler_button.setEnabled(has_ruler_selection)
         if has_ruler_selection:
             self._ruler_length_spin.blockSignals(True)
             self._ruler_length_spin.setValue(self._selected_ruler.length_px())
             self._ruler_length_spin.blockSignals(False)
+
+    def _remove_selected_ruler(self) -> None:
+        if self._selected_ruler is None:
+            return
+        self._scene.removeItem(self._selected_ruler)
+        self._selected_ruler = None
+        self._on_selection_changed()
 
     def _toggle_drop_selected_recording(self) -> None:
         """Explicit user decision to exclude a recording from the export (spec:
