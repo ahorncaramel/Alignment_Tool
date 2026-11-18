@@ -22,7 +22,8 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
 from alignment_tool.core.image_io import load_image_array
-from alignment_tool.core.session import SessionState
+from alignment_tool.core.session import STATE_NO, STATE_YES, SessionState
+from alignment_tool.core.transform import window_to_ihc
 
 _FONT_CANDIDATES = [
     "C:/Windows/Fonts/arialbd.ttf",
@@ -30,6 +31,9 @@ _FONT_CANDIDATES = [
     "arialbd.ttf",
     "arial.ttf",
 ]
+
+# Same colours as the on-screen outline (gui/window_item.py) -- keep in sync.
+_ACTIVITY_OUTLINE_COLOR = {STATE_YES: (40, 200, 40), STATE_NO: (220, 40, 40)}
 
 
 def _load_font(size: int) -> ImageFont.FreeTypeFont:
@@ -70,9 +74,10 @@ def _affine_ihc_to_window(theta_deg: float, scale: float, px: float, py: float, 
 def render_aligned_composite(session: SessionState) -> Image.Image:
     """Render IHC (base) + every placed, non-dropped recording window (on
     top, at its similarity-transform placement/contrast/opacity, labelled
-    with its short number) into one RGB image, sized to the IHC image's own
-    pixel extent -- the same layered composite the GUI shows (spec S9),
-    flattened for use outside the tool.
+    with its short number, outlined green/red if its activity_state is
+    decided) into one RGB image, sized to the IHC image's own pixel extent --
+    the same layered composite the GUI shows (spec S9), flattened for use
+    outside the tool.
     """
     if not session.ihc_image_path:
         raise ValueError("session has no IHC image to render against")
@@ -128,8 +133,22 @@ def render_aligned_composite(session: SessionState) -> Image.Image:
 
         canvas.paste(patch.convert("RGB"), (x0, y0), mask)
 
-        font = _load_font(max(10, int(round(win_h * session.shared_scale * 0.15))))
         draw = ImageDraw.Draw(canvas)
+
+        outline_color = _ACTIVITY_OUTLINE_COLOR.get(rec.activity_state)
+        if outline_color is not None:
+            # Same green/red-outline-for-activity convention as the live GUI
+            # (window_item.py) -- deliberately the *only* one of the two
+            # blinded judgements drawn here; cyp11b2_state stays export-only
+            # (spec conversation: no on-screen treatment decided yet).
+            corners_local = [(0, 0), (win_w, 0), (win_w, win_h), (0, win_h)]
+            corners_ihc = [
+                window_to_ihc(pt, (win_w, win_h), session.shared_scale, rec.placement) for pt in corners_local
+            ]
+            line_width = max(2, int(round(win_h * session.shared_scale * 0.02)))
+            draw.line(corners_ihc + [corners_ihc[0]], fill=outline_color, width=line_width, joint="curve")
+
+        font = _load_font(max(10, int(round(win_h * session.shared_scale * 0.15))))
         draw.text(
             (rec.placement.x, rec.placement.y),
             str(rec.short_number),

@@ -1,12 +1,19 @@
 import pytest
 
+from dataclasses import replace
+
 from alignment_tool.core.session import (
+    STATE_NO,
+    STATE_UNDECIDED,
+    STATE_YES,
     ContrastSettings,
     PixelSize,
     PreflightEntry,
     RecordingState,
     SessionHistory,
     SessionState,
+    cyp11b2_review_complete,
+    eligible_for_review,
     from_dict,
     load_session_json,
     save_session_json,
@@ -36,6 +43,8 @@ def make_session(scale=1.0) -> SessionState:
                 placement=SimilarityPlacement(theta_deg=12.0, x=100.0, y=200.0),
                 transparency_step=2,
                 contrast=ContrastSettings(display_min=10.0, display_max=200.0),
+                activity_state=STATE_YES,
+                cyp11b2_state=STATE_NO,
             ),
             RecordingState(
                 full_id="Rec_006_03_02",
@@ -59,6 +68,114 @@ def test_to_dict_from_dict_round_trip_is_exact():
     session = make_session()
     restored = from_dict(to_dict(session))
     assert restored == session
+
+
+def test_alignment_locked_defaults_false_and_round_trips():
+    session = make_session()
+    assert session.alignment_locked is False
+
+    locked = from_dict({**to_dict(session), "alignment_locked": True})
+    assert locked.alignment_locked is True
+    assert from_dict(to_dict(locked)).alignment_locked is True
+
+
+def test_from_dict_defaults_alignment_locked_to_false_for_old_sessions():
+    """A session autosaved before this feature existed has no alignment_locked
+    key at all -- must load as unlocked, not crash."""
+    session = make_session()
+    data = to_dict(session)
+    del data["alignment_locked"]
+    restored = from_dict(data)
+    assert restored.alignment_locked is False
+
+
+def test_from_dict_defaults_activity_and_cyp11b2_state_to_undecided_for_old_sessions():
+    """A session autosaved before this feature existed has no activity_state/
+    cyp11b2_state keys at all -- loading it must not crash and must not
+    silently invent a decided state.
+    """
+    session = make_session()
+    data = to_dict(session)
+    for rec in data["recordings"]:
+        del rec["activity_state"]
+        del rec["cyp11b2_state"]
+    restored = from_dict(data)
+    assert all(r.activity_state == STATE_UNDECIDED for r in restored.recordings)
+    assert all(r.cyp11b2_state == STATE_UNDECIDED for r in restored.recordings)
+
+
+def test_reviewed_flags_default_false_and_round_trip():
+    session = make_session()
+    assert all(r.cyp11b2_reviewed is False for r in session.recordings)
+    assert all(r.activity_reviewed is False for r in session.recordings)
+    assert from_dict(to_dict(session)) == session
+
+
+def test_from_dict_defaults_reviewed_flags_to_true_for_old_sessions_with_a_real_decision():
+    """A session saved before the guided review existed, but where the old
+    manual buttons already set a real yes/no, must not force that recording
+    through review again."""
+    session = make_session()  # recording 0 has activity_state=YES, cyp11b2_state=NO
+    data = to_dict(session)
+    for rec in data["recordings"]:
+        del rec["cyp11b2_reviewed"]
+        del rec["activity_reviewed"]
+    restored = from_dict(data)
+    assert restored.recordings[0].activity_state == STATE_YES
+    assert restored.recordings[0].activity_reviewed is True
+    assert restored.recordings[0].cyp11b2_state == STATE_NO
+    assert restored.recordings[0].cyp11b2_reviewed is True
+
+
+def test_from_dict_defaults_reviewed_flags_to_false_for_old_sessions_still_undecided():
+    """Old session, no reviewed keys, and the state was never touched (still
+    the untouched "undecided" default) -- must require review, since an
+    untouched default is indistinguishable from "never looked at it"."""
+    session = make_session()  # recording 1 has both states still undecided
+    data = to_dict(session)
+    for rec in data["recordings"]:
+        del rec["cyp11b2_reviewed"]
+        del rec["activity_reviewed"]
+    restored = from_dict(data)
+    assert restored.recordings[1].activity_state == STATE_UNDECIDED
+    assert restored.recordings[1].activity_reviewed is False
+    assert restored.recordings[1].cyp11b2_state == STATE_UNDECIDED
+    assert restored.recordings[1].cyp11b2_reviewed is False
+
+
+def test_eligible_for_review_excludes_dropped_and_unplaced_sorted_by_short_number():
+    session = make_session()
+    third = replace(session.recordings[0], full_id="Rec_006_03_00", short_number=0, placement=None)
+    dropped = replace(session.recordings[0], full_id="Rec_006_03_09", short_number=9, dropped=True)
+    session = replace(session, recordings=[session.recordings[1], session.recordings[0], dropped, third])
+
+    eligible = eligible_for_review(session)
+    assert [r.full_id for r in eligible] == ["Rec_006_03_01", "Rec_006_03_02"]
+
+
+def test_cyp11b2_review_complete_true_only_when_every_eligible_recording_is_reviewed():
+    session = make_session()
+    assert cyp11b2_review_complete(session) is False  # neither recording reviewed yet
+
+    one_reviewed = replace(
+        session, recordings=[replace(session.recordings[0], cyp11b2_reviewed=True), session.recordings[1]]
+    )
+    assert cyp11b2_review_complete(one_reviewed) is False
+
+    both_reviewed = replace(
+        session,
+        recordings=[
+            replace(session.recordings[0], cyp11b2_reviewed=True),
+            replace(session.recordings[1], cyp11b2_reviewed=True),
+        ],
+    )
+    assert cyp11b2_review_complete(both_reviewed) is True
+
+
+def test_cyp11b2_review_complete_vacuously_true_with_no_eligible_recordings():
+    session = make_session()
+    none_placed = replace(session, recordings=[replace(r, placement=None) for r in session.recordings])
+    assert cyp11b2_review_complete(none_placed) is True
 
 
 def test_json_save_load_round_trip_reproduces_placements_exactly(tmp_path):

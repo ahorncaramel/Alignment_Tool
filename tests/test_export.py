@@ -3,6 +3,8 @@ import io
 
 from alignment_tool.core.export import build_action_log, write_action_log, write_transform_csv
 from alignment_tool.core.session import (
+    STATE_NO,
+    STATE_YES,
     PixelSize,
     PreflightEntry,
     RecordingState,
@@ -30,6 +32,10 @@ def make_session() -> SessionState:
                 width_px=256,
                 height_px=256,
                 placement=SimilarityPlacement(theta_deg=45.0, x=500.0, y=600.0),
+                activity_state=STATE_YES,
+                cyp11b2_state=STATE_NO,
+                activity_reviewed=True,
+                cyp11b2_reviewed=True,
             ),
             RecordingState(
                 full_id="Rec_006_03_01",
@@ -151,6 +157,40 @@ def test_csv_row_values_match_the_placement(tmp_path):
     assert row["rotation_deg"] == "12.0"
     assert row["window_width_px"] == "512"
     assert row["window_height_px"] == "512"
+
+
+def test_csv_carries_activity_and_cyp11b2_state_columns(tmp_path):
+    session = make_session()
+    path = write_transform_csv(session, tmp_path / "transform.csv")
+    rows = {r["full_id"]: r for r in _read_data_rows(path)}
+    assert rows["Rec_006_03_02"]["activity_state"] == "yes"
+    assert rows["Rec_006_03_02"]["cyp11b2_state"] == "no"
+    # Never marked -> the "undecided" default, not blank.
+    assert rows["Rec_006_03_01"]["activity_state"] == "undecided"
+    assert rows["Rec_006_03_01"]["cyp11b2_state"] == "undecided"
+
+
+def test_activity_and_cyp11b2_state_are_reported_even_when_not_placed(tmp_path):
+    """These two judgements are independent of placement status (spec
+    conversation) -- an unplaced/dropped/missing row must still carry
+    whatever was recorded, unlike x/y/rotation_deg which blank out."""
+    session = make_session()
+    path = write_transform_csv(session, tmp_path / "transform.csv")
+    rows = {r["full_id"]: r for r in _read_data_rows(path)}
+    assert rows["Rec_006_03_03"]["activity_state"] == "undecided"
+    assert rows["Rec_006_03_04"]["activity_state"] == "undecided"  # dropped row
+
+
+def test_csv_row_carries_the_reviewed_flags_separately_from_the_state(tmp_path):
+    session = make_session()
+    path = write_transform_csv(session, tmp_path / "transform.csv")
+    rows = {r["full_id"]: r for r in _read_data_rows(path)}
+    # Recording 02 was actually reviewed (both state and reviewed flag set).
+    assert rows["Rec_006_03_02"]["cyp11b2_reviewed"] == "True"
+    assert rows["Rec_006_03_02"]["activity_reviewed"] == "True"
+    # Recording 01 was never reviewed -- still undecided, still unreviewed.
+    assert rows["Rec_006_03_01"]["cyp11b2_reviewed"] == "False"
+    assert rows["Rec_006_03_01"]["activity_reviewed"] == "False"
 
 
 def test_csv_row_carries_the_flat_image_path_so_a_row_is_self_contained(tmp_path):
