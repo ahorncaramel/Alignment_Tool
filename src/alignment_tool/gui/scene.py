@@ -26,9 +26,8 @@ class AlignmentView(QGraphicsView):
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
 
     def wheelEvent(self, event) -> None:
-        # Ctrl+wheel zooms the view; plain wheel is forwarded (default QGraphicsView
-        # behaviour) to whichever item is under the cursor, so a window item's own
-        # wheelEvent (rotation) still fires normally.
+        # Ctrl+wheel zooms the view; plain wheel pans it (default QGraphicsView
+        # scrolling behaviour -- window items no longer intercept wheel events).
         if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
             factor = 1.15 if event.angleDelta().y() > 0 else 1 / 1.15
             self.scale(factor, factor)

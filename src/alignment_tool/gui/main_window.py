@@ -512,7 +512,6 @@ class MainWindow(QMainWindow):
                 rec.short_number,
                 Path(rec.flat_image_path),
                 on_commit=self._on_window_commit,
-                on_scale_request=self._on_scale_request,
             )
             item.set_placement(rec.placement.theta_deg, rec.placement.x, rec.placement.y, state.shared_scale)
             item.set_transparency_step(rec.transparency_step)
@@ -894,19 +893,6 @@ class MainWindow(QMainWindow):
     # ---- Item-driven commits ----------------------------------------------
 
     def _on_window_commit(self, item: RecordingWindowItem) -> None:
-        # Mouse-wheel rotation (window_item.py) bypasses the rotation spin box,
-        # so keep it in sync if the wheel-rotated window is the selected one.
-        if item is self._selected_item:
-            self._rotation_spin.blockSignals(True)
-            self._rotation_spin.setValue(item.theta_deg())
-            self._rotation_spin.blockSignals(False)
-        self._commit()
-
-    def _on_scale_request(self, factor: float) -> None:
-        new_scale = self._scale_panel.value() * factor
-        self._scale_panel.set_scale(new_scale, source="manual")
-        for item in self._window_items.values():
-            item.set_scale(new_scale)
         self._commit()
 
     def _on_scale_edited(self, value: float) -> None:

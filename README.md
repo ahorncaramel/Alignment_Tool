@@ -37,12 +37,14 @@ The IHC image sits at the bottom; each recording's flat image is a
 draggable window on top, labelled with its short number.
 
 - **Drag** a window to move it.
-- **Mouse wheel** over a window rotates it (1°/step, **Shift**+wheel for
-  10°/step).
-- **Ctrl+wheel** over a window changes the **batch scale** (all windows
-  share one scale, spec S5.1 -- there is no per-window size).
-- **Ctrl+wheel** over empty canvas zooms the view.
+- **Mouse wheel / touchpad scroll** anywhere (over a window or empty canvas)
+  pans the view -- it never rotates or scales a window.
+- **Ctrl+wheel** zooms the view.
 - **Ctrl+0** or **View > Fit to Window** fits the view to everything placed.
+- Rotation and scale are never set from the canvas: rotate the selected
+  window via **Selected window rotation (deg)** in the Controls panel, and
+  resize all windows via **Batch scale** (all windows share one scale, spec
+  S5.1 -- there is no per-window size).
 
 All of the above (except view zoom) is frozen once alignment is **locked**
 (see below).
@@ -54,12 +56,12 @@ Top to bottom:
 - **Recordings list** -- double-click any entry to jump the view to that
   recording (works for dropped ones too). Shows `(dropped)` and
   `[activity: ...]` tags where relevant.
-- **Batch scale** -- the one shared scale field; typing here is equivalent
-  to Ctrl+wheel-resizing any window.
+- **Batch scale** -- the one shared scale field; the only way to resize
+  windows (all windows share one scale, there is no per-window size).
 - **IHC transparency** (0-9) -- fades the IHC layer.
 - **Selected window transparency** (0-9) -- fades just the selected window.
-- **Selected window rotation (deg)** -- type an exact angle for the selected
-  window instead of using the mouse wheel.
+- **Selected window rotation (deg)** -- the only way to rotate the selected
+  window; use the up/down arrows for 1°/step or type an exact angle.
 - **Selected window display contrast** -- min/max remap for on-screen
   viewing only; never touches the source pixel data. "Reset to full range"
   clears it.

@@ -40,18 +40,16 @@ class RecordingWindowItem(QGraphicsPixmapItem):
         short_number: int,
         image_path: Path,
         on_commit: Callable[["RecordingWindowItem"], None] | None = None,
-        on_scale_request: Callable[[float], None] | None = None,
         parent=None,
     ):
         super().__init__(parent)
         self.full_id = full_id
         self.short_number = short_number
         self.image_path = Path(image_path)
-        # Fired once per discrete user action (drag release, one wheel notch), NOT
-        # on every intermediate mouse-move -- otherwise a single drag would flood
-        # the undo stack with one entry per pixel of motion.
+        # Fired once per discrete user action (drag release), NOT on every
+        # intermediate mouse-move -- otherwise a single drag would flood the
+        # undo stack with one entry per pixel of motion.
         self._on_commit = on_commit
-        self._on_scale_request = on_scale_request
         self._display_min: float | None = None
         self._display_max: float | None = None
 
@@ -135,13 +133,12 @@ class RecordingWindowItem(QGraphicsPixmapItem):
         return self._dropped
 
     def set_locked(self, locked: bool) -> None:
-        """Gate interactive placement edits (drag + wheel rotate/scale-request)
-        without touching programmatic ones -- set_placement()/set_scale()/
-        set_theta_deg() are also called from main_window when *restoring* a
-        session (including a locked one), so they must keep working regardless
-        of this flag. Selectability is deliberately left alone: a locked
-        window must still be selectable so its activity/cyp11b2 state can be
-        set from the side panel.
+        """Gate interactive drag placement without touching programmatic edits
+        -- set_placement()/set_scale()/set_theta_deg() are also called from
+        main_window when *restoring* a session (including a locked one), so
+        they must keep working regardless of this flag. Selectability is
+        deliberately left alone: a locked window must still be selectable so
+        its activity/cyp11b2 state can be set from the side panel.
         """
         self._locked = locked
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, not locked)
@@ -208,32 +205,3 @@ class RecordingWindowItem(QGraphicsPixmapItem):
         super().mouseReleaseEvent(event)
         if self._on_commit:
             self._on_commit(self)
-
-    def wheelEvent(self, event) -> None:
-        if self._locked:
-            # Wheel-driven rotate and ctrl+wheel-driven scale-request are both
-            # placement edits -- frozen while locked, same as drag (see
-            # set_locked()). Ignore (not accept) so the event can still
-            # propagate/scroll a parent view if applicable.
-            event.ignore()
-            return
-        ctrl = bool(event.modifiers() & Qt.KeyboardModifier.ControlModifier)
-        # angleDelta().y(), not the removed QWheelEvent.delta() (PySide6 >= 6.x
-        # dropped that binding entirely -- calling it raises AttributeError,
-        # which silently broke both wheel-rotate and ctrl+wheel-scale).
-        wheel_y = event.angleDelta().y()
-        if ctrl and self._on_scale_request:
-            # Ctrl+wheel over a window == "drag-to-resize" (spec S5.3): it changes
-            # the one shared batch scale, not this window alone.
-            factor = 1.05 if wheel_y > 0 else 1 / 1.05
-            self._on_scale_request(factor)
-            event.accept()
-            return
-        # Plain wheel = 1 deg/step, Shift+wheel = 10 deg/step (spec S6 leaves the
-        # rotate interaction to implementer discretion).
-        step_deg = 10.0 if event.modifiers() & Qt.KeyboardModifier.ShiftModifier else 1.0
-        direction = 1.0 if wheel_y > 0 else -1.0
-        self.setRotation(self.rotation() + direction * step_deg)
-        if self._on_commit:
-            self._on_commit(self)
-        event.accept()

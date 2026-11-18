@@ -1,24 +1,9 @@
 import pytest
 from PIL import Image
-from PySide6.QtCore import QPoint, QPointF, Qt
-from PySide6.QtGui import QWheelEvent
 from PySide6.QtWidgets import QGraphicsItem
 
 from alignment_tool.core.session import STATE_NO, STATE_UNDECIDED, STATE_YES
 from alignment_tool.gui.window_item import RecordingWindowItem
-
-
-def _wheel_event(angle_delta_y=120, modifiers=Qt.KeyboardModifier.NoModifier):
-    return QWheelEvent(
-        QPointF(0, 0),
-        QPointF(0, 0),
-        QPoint(0, 0),
-        QPoint(0, angle_delta_y),
-        Qt.MouseButton.NoButton,
-        modifiers,
-        Qt.ScrollPhase.NoScrollPhase,
-        False,
-    )
 
 
 def _make_flat_image(path):
@@ -149,15 +134,6 @@ def test_cyp11b2_state_rejects_unknown_values(qapp, tmp_path):
         item.set_cyp11b2_state("maybe")
 
 
-def test_plain_wheel_rotates_the_window_when_unlocked(qapp, tmp_path):
-    path = tmp_path / "Flatrec_006_03_01.png"
-    _make_flat_image(path)
-    item = RecordingWindowItem("Rec_006_03_01", 1, path)
-
-    item.wheelEvent(_wheel_event(angle_delta_y=120))
-    assert item.rotation() == pytest.approx(1.0)  # wheelEvent rotates Qt's own .rotation() directly
-
-
 def test_unlocked_by_default_and_movable(qapp, tmp_path):
     path = tmp_path / "Flatrec_006_03_01.png"
     _make_flat_image(path)
@@ -167,7 +143,7 @@ def test_unlocked_by_default_and_movable(qapp, tmp_path):
     assert item.flags() & QGraphicsItem.GraphicsItemFlag.ItemIsMovable
 
 
-def test_set_locked_true_clears_the_movable_flag_and_ignores_wheel_rotation(qapp, tmp_path):
+def test_set_locked_true_clears_the_movable_flag(qapp, tmp_path):
     path = tmp_path / "Flatrec_006_03_01.png"
     _make_flat_image(path)
     item = RecordingWindowItem("Rec_006_03_01", 1, path)
@@ -176,22 +152,8 @@ def test_set_locked_true_clears_the_movable_flag_and_ignores_wheel_rotation(qapp
     assert item.is_locked() is True
     assert not (item.flags() & QGraphicsItem.GraphicsItemFlag.ItemIsMovable)
 
-    item.wheelEvent(_wheel_event(angle_delta_y=120))
-    assert item.rotation() == 0.0  # wheel-rotate is a placement edit, frozen while locked
 
-
-def test_set_locked_true_ignores_ctrl_wheel_scale_request(qapp, tmp_path):
-    path = tmp_path / "Flatrec_006_03_01.png"
-    _make_flat_image(path)
-    requests = []
-    item = RecordingWindowItem("Rec_006_03_01", 1, path, on_scale_request=requests.append)
-
-    item.set_locked(True)
-    item.wheelEvent(_wheel_event(angle_delta_y=120, modifiers=Qt.KeyboardModifier.ControlModifier))
-    assert requests == []
-
-
-def test_set_locked_false_restores_movability_and_wheel_rotation(qapp, tmp_path):
+def test_set_locked_false_restores_movability(qapp, tmp_path):
     path = tmp_path / "Flatrec_006_03_01.png"
     _make_flat_image(path)
     item = RecordingWindowItem("Rec_006_03_01", 1, path)
@@ -200,9 +162,6 @@ def test_set_locked_false_restores_movability_and_wheel_rotation(qapp, tmp_path)
     item.set_locked(False)
     assert item.is_locked() is False
     assert item.flags() & QGraphicsItem.GraphicsItemFlag.ItemIsMovable
-
-    item.wheelEvent(_wheel_event(angle_delta_y=120))
-    assert item.rotation() == pytest.approx(1.0)
 
 
 def test_set_placement_still_works_while_locked(qapp, tmp_path):
