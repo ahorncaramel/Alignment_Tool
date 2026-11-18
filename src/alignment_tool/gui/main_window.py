@@ -116,6 +116,11 @@ class MainWindow(QMainWindow):
         self._build_side_panel()
         self._build_menu()
         self.statusBar().showMessage("No experiment open")
+        # Permanent (not cleared by showMessage/timeouts above) so the IHC
+        # identity stays visible the whole time a session is open -- the
+        # whole point is to catch a wrong-file pick before it's too late.
+        self._ihc_info_label = QLabel("")
+        self.statusBar().addPermanentWidget(self._ihc_info_label)
 
         QTimer.singleShot(0, self.open_experiment_flow)
 
@@ -500,9 +505,13 @@ class MainWindow(QMainWindow):
         self._review_index = 0
         self._review_panel.setVisible(False)
 
-        self._ihc_item = IhcLayerItem(Path(state.ihc_image_path))
+        ihc_path = Path(state.ihc_image_path)
+        self._ihc_item = IhcLayerItem(ihc_path)
         self._ihc_item.set_transparency_step(state.ihc_transparency_step)
         self._scene.addItem(self._ihc_item)
+        ihc_dims = read_image_dimensions(ihc_path)
+        dims_text = f"{ihc_dims[0]} × {ihc_dims[1]} px" if ihc_dims else "size unknown"
+        self._ihc_info_label.setText(f"IHC: {ihc_path.name} – {dims_text}")
 
         for rec in state.recordings:
             if rec.placement is None or not rec.flat_image_path:
